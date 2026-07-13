@@ -1,0 +1,46 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build: ./backend
+    environment:
+      APP_HOST: ${APP_HOST}
+      APP_PORT: ${APP_PORT}
+      DATABASE_URL: ${DATABASE_URL}
+    ports:
+      - "${API_HOST_PORT:-8000}:${APP_PORT:-8000}"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  device-simulator:
+    build: ./device-simulator
+    environment:
+      API_BASE_URL: ${API_BASE_URL}
+      DEVICE_HARDWARE_ID: ${DEVICE_HARDWARE_ID}
+      DEVICE_NAME: ${DEVICE_NAME}
+      HEARTBEAT_INTERVAL_SECONDS: ${HEARTBEAT_INTERVAL_SECONDS}
+      TELEMETRY_INTERVAL_SECONDS: ${TELEMETRY_INTERVAL_SECONDS}
+      COMMAND_POLL_INTERVAL_SECONDS: ${COMMAND_POLL_INTERVAL_SECONDS}
+      AMBIENT_TEMPERATURE: ${AMBIENT_TEMPERATURE}
+      STARTING_TEMPERATURE: ${STARTING_TEMPERATURE}
+      TEMPERATURE_STEP: ${TEMPERATURE_STEP}
+    depends_on:
+      - api
+
+volumes:
+  db_data:
