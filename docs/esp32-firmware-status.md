@@ -9,7 +9,7 @@ end of each stage.
 | 1 — PlatformIO project + DHT11 test | **Done** | 2026-08-25 | Confirmed working on hardware. See notes below. |
 | 2 — IR receiver | **Done** | 2026-08-25 | Confirmed working on hardware. See notes below. |
 | 3 — IR transmitter | **Done** | 2026-08-25 | Confirmed working on hardware. See notes below. |
-| 4 — Combined local firmware architecture | Not started | | |
+| 4 — Combined local firmware architecture | **Done** | 2026-08-25 | Confirmed working on hardware. See notes below. |
 | 5 — Wi-Fi and backend registration | Not started | | |
 | 6 — Telemetry and commands | Not started | | |
 | 7 — Reliability and final documentation | Not started | | |
@@ -123,6 +123,56 @@ end of each stage.
      close range resolved it. No further code change needed for this.
 - Confirms `IRElectraAc` + real captured state replay is a viable
   transmission path for Stage 6 command translation.
+
+## Stage 4 — notes
+
+- Refactored into PlatformIO `lib/` components, each with an explicit
+  result/error type:
+  - `lib/ClimateSensor/`: `ClimateReadStatus{Ok,Failed}`,
+    `ClimateSensor::update(nowMs, outReading)` — same DHT11 logic as
+    Stage 1, just extracted with the read-interval gate as a member.
+  - `lib/AcTransmitter/`: `AcCommand` enum (the 5 real captured commands),
+    `AcSendResult{Ok,UnknownCommand}`, `AcTransmitter::send(command)` —
+    the Stage 3 `IRElectraAc` + captured-state-array logic, extracted
+    verbatim (including the `send(1)` repeat fix).
+  - `lib/DeviceState/`: `AcDeviceState{power: PowerState, 
+    targetTemperatureC: int8_t}`, new this stage. Deliberately starts
+    `Unknown`/`-1` rather than an assumed default, since there's no
+    feedback channel (receiver is gone) to confirm real AC state.
+    `targetTemperatureC` is only ever set to 22 or 23 — the exact values
+    decoded from the two captured temperature commands — not a synthesized
+    +/-1 delta, since the firmware doesn't know the true general
+    temperature-step semantics.
+  - `lib/SerialDiagnostics/`: `pollSerialCommand()` /
+    `printSerialHelp()` — the Stage 3 serial command parsing, extracted.
+  - `src/main.cpp`: orchestration only now — wires the components together
+    in `setup()`/`loop()`, no hardware logic of its own.
+- **IR receiver dropped** per explicit user decision (this conversation):
+  `IRrecv`/`IRAcUtils`/`IRutils` includes removed, GPIO5 unused. Rationale
+  recorded in Stage 0/2 findings: the backend has no endpoint for a device
+  to report AC state detected from a physical remote, so the receiver had
+  no production role once transmission was validated in Stage 3. It
+  remains documented and available in git history (Stages 2-3 commits) if
+  ever needed again.
+- Removed the artificial `delay(50)` that used to gate re-enabling the
+  receiver after a transmission — no longer needed now that the receiver
+  is gone, which also reduces blocking time per command.
+- No `platformio.ini` dependency changes.
+- Behavior is intended to be identical to Stage 3 (same commands, same
+  DHT11 cadence) — this is a pure internal refactor plus the receiver
+  removal, not a functional change to transmission or sensing.
+- Not built/uploaded/monitored by the assistant, per the plan's hardware
+  interaction rule — user built, uploaded, and tested against the real AC
+  themselves.
+- Initial test showed commands not reaching the AC. Diffed the refactored
+  transmit path (`lib/AcTransmitter`) against the working Stage 3 code
+  line-by-line and byte-for-byte against
+  `captures/electra-ac-commands.md` — no discrepancy found, confirming
+  this was not a code regression. Root cause was transmitter aim/range
+  again (same class of issue as Stage 3) — worked once retested at close,
+  direct range. No code change was needed.
+- Confirmed on real hardware: all 5 commands work identically to Stage 3;
+  DHT11 unaffected.
 
 ## Simulator parity checklist (living document — update in Stage 6)
 

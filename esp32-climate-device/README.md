@@ -12,9 +12,10 @@ NeoPixel test project) or with the backend/simulator.
 
 ## Status
 
-Implementation proceeds in gated stages. Stages 1 (DHT11 sensor test) and 2
-(IR receiver) are confirmed working on hardware. Stage 3 (IR transmitter)
-is implemented and awaiting hardware verification. See:
+Implementation proceeds in gated stages. Stages 1-3 (DHT11 sensor,
+IR receiver, IR transmitter) are confirmed working on hardware. Stage 4
+(combined local architecture) is implemented and awaiting hardware
+verification. See:
 
 - [`../docs/esp32-firmware-plan.md`](../docs/esp32-firmware-plan.md) — full
   staged implementation plan, safety rules, hardware pinout, and the
@@ -29,7 +30,9 @@ is implemented and awaiting hardware verification. See:
 - Framework: Arduino
 - Serial baud rate: 115200
 - DHT11 data: GPIO4
-- IR receiver output: GPIO5
+- IR receiver output: GPIO5 — used for protocol discovery in Stages 2-3
+  only; **not used by the firmware from Stage 4 onward** (see Stage 4
+  notes below). The physical module can stay wired; it's just unused.
 - IR transmitter data: GPIO6
 - Onboard RGB LED: GPIO48
 
@@ -171,3 +174,48 @@ Transmit done.
 - [ ] The IR receiver isn't stuck/confused by self-transmission (Stage 2
       behavior — reading a different real remote press afterward — still
       works).
+
+## Stage 4 — Combined local firmware architecture
+
+Refactors Stages 1-3 into clear PlatformIO library components, each with
+an explicit result/error type, driven by a cooperative non-blocking
+`loop()`. No Wi-Fi yet.
+
+```
+lib/
+  ClimateSensor/      DHT11 read scheduling — ClimateReadStatus{Ok,Failed}
+  AcTransmitter/       IR transmit — AcCommand enum, AcSendResult{Ok,UnknownCommand}
+  DeviceState/          local best-effort AC state model
+  SerialDiagnostics/    serial command parsing (u/d/n/o/f) + help text
+src/main.cpp            orchestration only: wires components together in setup()/loop()
+```
+
+**The IR receiver is dropped from this and all later stages.** It was a
+Stage 2/3 protocol-discovery tool, not a production capability: the
+backend contract (Stage 0 findings) has no endpoint for a device to
+report AC state it detected from a physical remote, so there was nothing
+for a receiver to feed once transmission worked. GPIO5 is now unused;
+`IRrecv`/`IRAcUtils`/`IRutils` are no longer included. This was an
+explicit decision, not an oversight — see
+[`../docs/esp32-firmware-status.md`](../docs/esp32-firmware-status.md)
+Stage 4 notes.
+
+`AcDeviceState` tracks only what this firmware has explicitly told the AC
+(power, and 22/23°C target from the two temperature commands actually
+captured) — there's no feedback channel to confirm the AC applied it, so
+`power`/`targetTemperatureC` start `Unknown`/`-1` rather than an assumed
+default. Fan speed isn't tracked; the Stage 2 capture never decoded a
+different fan value across presses.
+
+Behavior is otherwise identical to Stage 3: DHT11 prints every ~2s, and
+typing `u`/`d`/`n`/`o`/`f` + Enter in the serial monitor transmits the
+corresponding captured command. No dependency changes.
+
+### Verification checklist
+
+- [ ] `pio run` builds without errors.
+- [ ] DHT11 readings print every ~2s, same as before.
+- [ ] Typing `u`/`d`/`n`/`o`/`f` + Enter behaves identically to Stage 3
+      (serial output and physical AC reaction).
+- [ ] No regressions from the refactor — this stage should be invisible
+      behaviorally aside from the receiver being gone.
