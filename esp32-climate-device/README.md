@@ -12,10 +12,10 @@ NeoPixel test project) or with the backend/simulator.
 
 ## Status
 
-Implementation proceeds in gated stages. Stages 1-3 (DHT11 sensor,
-IR receiver, IR transmitter) are confirmed working on hardware. Stage 4
-(combined local architecture) is implemented and awaiting hardware
-verification. See:
+Implementation proceeds in gated stages. Stages 1-4 (DHT11 sensor, IR
+receiver, IR transmitter, combined local architecture) are confirmed
+working on hardware. Stage 5 (Wi-Fi + backend registration) is implemented
+and awaiting hardware/network verification. See:
 
 - [`../docs/esp32-firmware-plan.md`](../docs/esp32-firmware-plan.md) — full
   staged implementation plan, safety rules, hardware pinout, and the
@@ -219,3 +219,78 @@ corresponding captured command. No dependency changes.
       (serial output and physical AC reaction).
 - [ ] No regressions from the refactor — this stage should be invisible
       behaviorally aside from the receiver being gone.
+
+## Stage 5 — Wi-Fi and backend registration
+
+Adds Wi-Fi connectivity and backend registration, implemented exactly per
+the discovered contract (`POST /api/v1/device/register
+{hardware_id, device_type, name}`, no auth). No telemetry/heartbeat/
+commands yet — that's Stage 6.
+
+```
+lib/
+  DeviceIdentity/   getHardwareId() — stable ID from the ESP32's eFuse MAC
+  WifiConnection/   connect/reconnect, bounded exponential backoff (1s -> 30s cap)
+  BackendClient/    registration POST, bounded exponential backoff (3s -> 30s cap)
+```
+
+**Setup required before this will work — one-time, local only:**
+
+1. Copy `include/secrets.example.h` to `include/secrets.h` (already done
+   for you this once, with placeholder values — **you must edit it**).
+2. Edit `include/secrets.h` with your real Wi-Fi SSID/password and your
+   backend's URL.
+3. **The ESP32 cannot reach `localhost`** — that means the device itself,
+   not your computer. Find your computer's LAN IP (`ipconfig` on
+   Windows) and use `http://<that-ip>:8000` as `BACKEND_BASE_URL`. Make
+   sure the backend is listening on `0.0.0.0`, not `127.0.0.1`, so it
+   accepts connections from other devices on the network — check how
+   it's started/configured (e.g. uvicorn's `--host` flag or equivalent)
+   if unsure.
+4. `include/secrets.h` is gitignored — it will never be committed.
+
+The device's `hardware_id` is derived from the ESP32's eFuse MAC (e.g.
+`esp32-a1b2c3d4e5f6`) — stable across reboots, satisfying the backend's
+idempotent-registration contract without needing to persist anything.
+`device_type` is hardcoded to `"climate_controller"`, matching the
+backend's own schema default — not invented.
+
+Both Wi-Fi reconnection and registration retries use bounded exponential
+backoff (capped at 30s) rather than a tight loop or the simulator's
+naive infinite 3s retry — DHT11 reads and serial AC commands keep working
+throughout, since nothing here blocks longer than a single HTTP request's
+timeout (5s, matching the simulator's own timeout).
+
+**No Wi-Fi password is ever printed to serial.**
+
+Expected serial output on a successful boot:
+
+```
+Hardware ID: esp32-a1b2c3d4e5f6
+Wi-Fi connecting to <your-ssid>...
+Wi-Fi connected, IP: 192.168.1.123
+Registering with backend (http://192.168.1.50:8000)...
+Registered with backend.
+```
+
+If Wi-Fi or the backend aren't reachable, you'll see periodic retry
+messages with growing backoff intervals instead — DHT11/AC commands keep
+working normally in the meantime.
+
+### Verification checklist
+
+- [ ] Edited `include/secrets.h` with real Wi-Fi credentials and your
+      computer's LAN IP.
+- [ ] `pio run` builds without errors.
+- [ ] Serial monitor shows a stable `Hardware ID: esp32-...` line.
+- [ ] Wi-Fi connects and prints its assigned IP.
+- [ ] Registration succeeds (`Registered with backend.`) — confirm the
+      device shows up via the backend's device list/API.
+- [ ] Re-running registration (e.g. power-cycling the board) doesn't
+      error — idempotent re-registration.
+- [ ] Temporarily using a wrong Wi-Fi password or unreachable backend URL
+      shows retry messages with growing backoff, not a crash or tight
+      loop — then revert to correct values.
+- [ ] DHT11 readings and serial AC commands (`u`/`d`/`n`/`o`/`f`) still
+      work throughout, including while Wi-Fi/registration are retrying.
+- [ ] No Wi-Fi password appears anywhere in the serial output.

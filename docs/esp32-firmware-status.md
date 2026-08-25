@@ -10,7 +10,7 @@ end of each stage.
 | 2 — IR receiver | **Done** | 2026-08-25 | Confirmed working on hardware. See notes below. |
 | 3 — IR transmitter | **Done** | 2026-08-25 | Confirmed working on hardware. See notes below. |
 | 4 — Combined local firmware architecture | **Done** | 2026-08-25 | Confirmed working on hardware. See notes below. |
-| 5 — Wi-Fi and backend registration | Not started | | |
+| 5 — Wi-Fi and backend registration | **Done** | 2026-08-26 | Confirmed working end-to-end. See notes below. |
 | 6 — Telemetry and commands | Not started | | |
 | 7 — Reliability and final documentation | Not started | | |
 
@@ -173,6 +173,61 @@ end of each stage.
   direct range. No code change was needed.
 - Confirmed on real hardware: all 5 commands work identically to Stage 3;
   DHT11 unaffected.
+
+## Stage 5 — notes
+
+- New `platformio.ini` dependency: `bblanchon/ArduinoJson@^7.4.3` (current
+  stable) for building the registration JSON body. `WiFi.h`/`HTTPClient.h`
+  are bundled with the ESP32 Arduino core — no separate dependency.
+- New components: `lib/DeviceIdentity/` (`getHardwareId()` — stable ID
+  from `ESP.getEfuseMac()`, format `esp32-<12 hex chars>`),
+  `lib/WifiConnection/` (connect/reconnect state machine, bounded
+  exponential backoff 1s→30s cap, never a tight loop), `lib/BackendClient/`
+  (registration POST with the same backoff pattern, 3s→30s cap).
+- Registration implemented exactly per the Stage 0 contract: `POST
+  /api/v1/device/register {hardware_id, device_type, name}`, no auth.
+  `device_type` hardcoded to `"climate_controller"` — matches
+  `backend/app/schemas/device.py`'s own Pydantic default and the
+  simulator's literal value (verified in
+  `device-simulator/device_simulator/api_client.py`), not invented.
+  `name` is read from `secrets.h`'s `DEVICE_NAME` and omitted from the
+  payload entirely if empty (field is nullable in the schema).
+- Credentials/config: `include/secrets.example.h` committed as the
+  template; `include/secrets.h` is gitignored and was seeded locally
+  with placeholder values (a straight copy of the example) — **the user
+  must edit it with real Wi-Fi credentials and their backend's LAN IP**
+  before this stage will actually connect to anything.
+- No registration token persistence (Preferences/NVS) — confirmed still
+  correct per Stage 0: the backend has no auth/token concept, so there is
+  nothing to persist.
+- DHT11 (Stage 1) and IR transmit/serial commands (Stages 3-4) are
+  untouched and keep working during Wi-Fi/registration retries — neither
+  `WifiConnection::update()` nor `BackendClient::update()` block beyond a
+  single HTTP call's timeout (5s, matching the simulator's own timeout),
+  gated by their own backoff timer rather than looping.
+- No Wi-Fi password is ever passed to `Serial.print`/`println` anywhere in
+  the new code (confirmed by inspection) — only SSID name, IP address, and
+  backend URL are logged, none of which are the password.
+- Not built/uploaded/monitored by the assistant, per the plan's hardware
+  interaction rule — user built, uploaded, and monitored themselves.
+- Confirmed end-to-end on real hardware: Wi-Fi connects, `Hardware ID:
+  esp32-...` / `Registered with backend.` printed, and independently
+  confirmed via backend logs (`POST /api/v1/device/register HTTP/1.1 200
+  OK`).
+- Along the way: the user initially edited the committed
+  `include/secrets.example.h` template with real Wi-Fi credentials
+  instead of the gitignored `include/secrets.h`. Caught before any commit
+  — moved the real values to `secrets.h`, restored the template to
+  placeholders. Nothing was ever pushed. Also caught a `BACKEND_BASE_URL`
+  port mismatch (`secrets.h` had `:8000`, but the user's root `.env` maps
+  `API_HOST_PORT=8080`) before it caused a connection failure.
+- User asked about deleting a registered device; confirmed via
+  `backend/app/services/device_service.py` that `POST
+  /api/v1/device/register` is a true upsert (idempotent by design, not an
+  error) — no firmware/backend change needed for that. The absence of a
+  device-delete endpoint was logged as a deferred, non-blocking item in
+  `../TODO.md` rather than implemented (backend change, out of scope
+  without explicit approval).
 
 ## Simulator parity checklist (living document — update in Stage 6)
 
