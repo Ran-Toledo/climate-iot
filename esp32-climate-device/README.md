@@ -12,9 +12,9 @@ NeoPixel test project) or with the backend/simulator.
 
 ## Status
 
-Implementation proceeds in gated stages. Stage 1 (DHT11 sensor test) is
-confirmed working on hardware. Stage 2 (IR receiver) is implemented and
-awaiting hardware verification. See:
+Implementation proceeds in gated stages. Stages 1 (DHT11 sensor test) and 2
+(IR receiver) are confirmed working on hardware. Stage 3 (IR transmitter)
+is implemented and awaiting hardware verification. See:
 
 - [`../docs/esp32-firmware-plan.md`](../docs/esp32-firmware-plan.md) — full
   staged implementation plan, safety rules, hardware pinout, and the
@@ -119,3 +119,55 @@ the raw dump.
 - [ ] Save/share the raw serial output for at least: power on, power off,
       and one temperature-change command — Stage 3 needs real captured
       data to reproduce, not invented placeholder commands.
+
+## Stage 3 — IR transmitter
+
+`src/main.cpp` now also transmits on GPIO6 via the `IRElectraAc`
+protocol-specific class (the AC unit's protocol, confirmed in Stage 2, is
+ELECTRA_AC). It replays the exact 13-byte states captured from the real
+remote in Stage 2 (see
+[`captures/electra-ac-commands.md`](captures/electra-ac-commands.md)) —
+nothing is invented or guessed. **Transmission only happens when you type
+a command into the serial monitor — never on startup.**
+
+While monitoring (`pio device monitor`), type one of these letters and
+press Enter:
+
+| Key | Command |
+|---|---|
+| `u` | temperature up (→23°C) |
+| `d` | temperature down (→22°C) |
+| `n` | power on |
+| `o` | power off |
+| `f` | fan level change |
+
+The DHT11 (Stage 1) and IR receiver (Stage 2) keep running unchanged.
+During a transmission, IR reception is briefly paused
+(`irrecv.disableIRIn()` / `enableIRIn()`) so the receiver doesn't pick up
+and re-print our own transmitted signal.
+
+Library used: same `crankyoldgit/IRremoteESP8266` dependency — no new
+`platformio.ini` entry needed, since `IRElectraAc` (`ir_Electra.h`) is
+part of that library.
+
+Expected serial output when you type e.g. `n` + Enter:
+
+```
+Transmitting: power on
+Transmit done.
+```
+
+### Verification checklist
+
+- [ ] `pio run` builds without errors.
+- [ ] DHT11 and IR-receive behavior from Stages 1–2 are unaffected.
+- [ ] Typing `u`/`d`/`n`/`o`/`f` + Enter each fire exactly one transmission
+      and print the expected `Transmitting: ...` / `Transmit done.` lines.
+- [ ] **The physical AC unit reacts correctly** to each command: `n` turns
+      it on, `o` turns it off, `u`/`d` change the setpoint temperature (and
+      the AC's own display, if it has one, should reflect this), `f`
+      changes fan speed.
+- [ ] No transmission happens on boot/reset — only on typed command.
+- [ ] The IR receiver isn't stuck/confused by self-transmission (Stage 2
+      behavior — reading a different real remote press afterward — still
+      works).

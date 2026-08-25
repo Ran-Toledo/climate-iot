@@ -8,7 +8,7 @@ end of each stage.
 | 0 — Repository & protocol discovery | **Done** | 2026-08-25 | See findings below. No code created/changed. |
 | 1 — PlatformIO project + DHT11 test | **Done** | 2026-08-25 | Confirmed working on hardware. See notes below. |
 | 2 — IR receiver | **Done** | 2026-08-25 | Confirmed working on hardware. See notes below. |
-| 3 — IR transmitter | Not started | | |
+| 3 — IR transmitter | **Done** | 2026-08-25 | Confirmed working on hardware. See notes below. |
 | 4 — Combined local firmware architecture | Not started | | |
 | 5 — Wi-Fi and backend registration | Not started | | |
 | 6 — Telemetry and commands | Not started | | |
@@ -88,6 +88,41 @@ end of each stage.
   transmitter can construct/send validated Electra AC state rather than
   only replaying raw timing — per the plan's preference for
   protocol-specific implementations when available.
+
+## Stage 3 — notes
+
+- `esp32-climate-device/src/main.cpp`: added `IRElectraAc irsend(6)` and
+  five `const uint8_t[13]` state arrays copied verbatim from
+  `captures/electra-ac-commands.md` (temp up, temp down, power on, power
+  off, fan change) — no invented/placeholder command data, per plan.
+- Transmission is fired only from `handleSerialCommand()`, which reads one
+  character from `Serial` per loop iteration and maps `u`/`d`/`n`/`o`/`f`
+  to a command; unrecognized input (other than line-ending characters)
+  prints a help message instead of transmitting. Nothing transmits from
+  `setup()`.
+- `sendCommand()` calls `irrecv.disableIRIn()` before `irsend.send()` and
+  `irrecv.enableIRIn()` after (with a 50ms gap), so the Stage 2 receiver
+  doesn't decode/print our own transmission as if it were a real remote
+  press.
+- No new `platformio.ini` dependency — `IRElectraAc` (`ir_Electra.h`) is
+  part of the already-declared `crankyoldgit/IRremoteESP8266` package.
+- DHT11 (Stage 1) and IR receive (Stage 2) loops are otherwise unchanged.
+- Not built/uploaded/monitored by the assistant, per the plan's hardware
+  interaction rule — user built, uploaded, and tested against the real AC
+  themselves.
+- Confirmed on real hardware, with two fixes along the way:
+  1. `n`/`o` (power on/off) worked immediately with a single-frame send;
+     `u`/`d`/`f` (temp up/down, fan change) initially did not. Changed
+     `irsend.send()` to `irsend.send(1)` (frame + one repeat, via the
+     library's own protocol-correct repeat timing) as the likely fix,
+     since the real remote plausibly sends those specific commands as two
+     back-to-back frames.
+  2. Remaining intermittent AC reception traced to IR transmitter
+     range/aim (module was at longer range and/or an angle) — not a code
+     or wiring defect. Pointing it directly at the AC's receiver eye at
+     close range resolved it. No further code change needed for this.
+- Confirms `IRElectraAc` + real captured state replay is a viable
+  transmission path for Stage 6 command translation.
 
 ## Simulator parity checklist (living document — update in Stage 6)
 

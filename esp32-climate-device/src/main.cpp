@@ -1,13 +1,17 @@
-// Stage 2: adds IR reception on GPIO5 alongside the Stage 1 DHT11 sensor
-// test. Captures and prints AC remote commands (protocol, bit count,
-// decoded value/state bytes, raw timing, repeat status) so they can be
-// reproduced by the transmitter in Stage 3. No transmission happens here.
+// Stage 3: adds IR transmission on GPIO6, reproducing real commands
+// captured from the physical Electra AC remote in Stage 2 (see
+// captures/electra-ac-commands.md) via the library's protocol-specific
+// IRElectraAc class. Transmission only happens on an explicit serial
+// command — never on startup. DHT11 (GPIO4) and IR reception (GPIO5)
+// keep working; reception is paused during transmission to avoid the
+// receiver picking up our own signal.
 
 #include <Arduino.h>
 #include <DHT.h>
 #include <IRrecv.h>
 #include <IRac.h>
 #include <IRutils.h>
+#include <ir_Electra.h>
 
 #define DHT_PIN 4
 #define DHT_TYPE DHT11
@@ -20,20 +24,89 @@
 #define IR_CAPTURE_BUFFER_SIZE 1024
 #define IR_TIMEOUT_MS 15
 
+#define IR_SEND_PIN 6
+
 DHT dht(DHT_PIN, DHT_TYPE);
 unsigned long lastDhtReadMs = 0;
 
 IRrecv irrecv(IR_RECV_PIN, IR_CAPTURE_BUFFER_SIZE, IR_TIMEOUT_MS, true);
 decode_results irResults;
 
-void setup() {
-  Serial.begin(115200);
-  delay(1000); // give the serial monitor time to attach
+IRElectraAc irsend(IR_SEND_PIN);
 
-  dht.begin();
+// Real Electra AC states captured via the Stage 2 IR receiver from the
+// physical remote (see captures/electra-ac-commands.md). Never
+// invented/placeholder data.
+const uint8_t kCmdTempUp[kElectraAcStateLength] = {
+    0xC3, 0x7F, 0xF5, 0x2E, 0x40, 0x00, 0x20, 0x00, 0x00, 0x20, 0x00, 0x00, 0xE5};
+const uint8_t kCmdTempDown[kElectraAcStateLength] = {
+    0xC3, 0x77, 0xF5, 0x2D, 0x40, 0x00, 0x20, 0x00, 0x00, 0x20, 0x00, 0x01, 0xDD};
+const uint8_t kCmdPowerOff[kElectraAcStateLength] = {
+    0xC3, 0x7F, 0xF5, 0x2E, 0x40, 0x00, 0x20, 0x00, 0x00, 0x00, 0x00, 0x05, 0xCA};
+const uint8_t kCmdPowerOn[kElectraAcStateLength] = {
+    0xC3, 0x7F, 0xF5, 0x2F, 0x40, 0x00, 0x20, 0x00, 0x00, 0x20, 0x00, 0x05, 0xEB};
+const uint8_t kCmdFanChange[kElectraAcStateLength] = {
+    0xC3, 0x7F, 0xF5, 0x30, 0x40, 0x00, 0x20, 0x00, 0x00, 0x20, 0x00, 0x04, 0xEB};
+
+void printTransmitHelp() {
+  Serial.println("Type a letter + Enter to send a captured test command:");
+  Serial.println("  u = temperature up (23C)");
+  Serial.println("  d = temperature down (22C)");
+  Serial.println("  n = power on");
+  Serial.println("  o = power off");
+  Serial.println("  f = fan level change");
+}
+
+void sendCommand(const char *name, const uint8_t state[kElectraAcStateLength]) {
+  Serial.print("Transmitting: ");
+  Serial.println(name);
+
+  // Pause reception so we don't decode our own transmission.
+  irrecv.disableIRIn();
+
+  irsend.setRaw(state);
+  // Send the frame plus one repeat: on/off worked with a single frame, but
+  // temp/fan changes didn't — the physical remote likely sends those as
+  // two back-to-back frames, which this reproduces via the library's own
+  // protocol-correct repeat timing (not a guessed delay).
+  irsend.send(1);
+
+  delay(50);
   irrecv.enableIRIn();
 
-  Serial.println("Stage 2: DHT11 on GPIO4 + IR receiver on GPIO5 starting...");
+  Serial.println("Transmit done.");
+}
+
+void handleSerialCommand() {
+  if (!Serial.available()) {
+    return;
+  }
+  char c = Serial.read();
+  switch (c) {
+    case 'u':
+      sendCommand("temperature up", kCmdTempUp);
+      break;
+    case 'd':
+      sendCommand("temperature down", kCmdTempDown);
+      break;
+    case 'n':
+      sendCommand("power on", kCmdPowerOn);
+      break;
+    case 'o':
+      sendCommand("power off", kCmdPowerOff);
+      break;
+    case 'f':
+      sendCommand("fan level change", kCmdFanChange);
+      break;
+    case '\r':
+    case '\n':
+      break; // ignore line endings
+    default:
+      Serial.print("Unknown command: ");
+      Serial.println(c);
+      printTransmitHelp();
+      break;
+  }
 }
 
 void handleDht() {
@@ -88,7 +161,21 @@ void handleIr() {
   irrecv.resume();
 }
 
+void setup() {
+  Serial.begin(115200);
+  delay(1000); // give the serial monitor time to attach
+
+  dht.begin();
+  irrecv.enableIRIn();
+  irsend.begin();
+
+  Serial.println(
+      "Stage 3: DHT11 (GPIO4) + IR receiver (GPIO5) + IR transmitter (GPIO6) starting...");
+  printTransmitHelp();
+}
+
 void loop() {
   handleIr();
   handleDht();
+  handleSerialCommand();
 }
