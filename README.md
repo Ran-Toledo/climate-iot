@@ -21,7 +21,7 @@ The core idea is that a device has two independent states:
 They are allowed to disagree — e.g. right after you push a command, the
 desired state changes instantly but the reported state only catches up once
 the device (or simulator) executes it. Sensor readings (temperature,
-humidity, CO2) are tracked separately as time-series `telemetry`, since a
+humidity) are tracked separately as time-series `telemetry`, since a
 device can *report* a new setpoint instantly while the *room* takes time to
 actually get there.
 
@@ -141,7 +141,7 @@ Ctrl+C to stop following logs.
 |---|---|---|
 | POST | `/api/v1/device/register` | `{hardware_id, device_type?, name?}` |
 | POST | `/api/v1/device/heartbeat` | `{hardware_id}` |
-| POST | `/api/v1/device/telemetry` | `{hardware_id, temperature, humidity, co2}` |
+| POST | `/api/v1/device/telemetry` | `{hardware_id, temperature, humidity}` |
 | GET | `/api/v1/device/commands/next?hardware_id=...` | — |
 | POST | `/api/v1/device/commands/{id}/result` | `{status: completed\|failed, result?}` |
 

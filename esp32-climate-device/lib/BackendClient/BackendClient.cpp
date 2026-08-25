@@ -55,3 +55,109 @@ void BackendClient::update(unsigned long nowMs, const String &hardwareId, const 
   nextAttemptMs_ = nowMs + backoffMs_;
   backoffMs_ = (backoffMs_ * 2 > kMaxBackoffMs) ? kMaxBackoffMs : backoffMs_ * 2;
 }
+
+bool BackendClient::sendHeartbeat(const String &hardwareId) {
+  JsonDocument doc;
+  doc["hardware_id"] = hardwareId;
+  String body;
+  serializeJson(doc, body);
+
+  HTTPClient http;
+  http.setTimeout(kHttpTimeoutMs);
+  http.begin(baseUrl_ + "/api/v1/device/heartbeat");
+  http.addHeader("Content-Type", "application/json");
+  int httpCode = http.POST(body);
+  http.end();
+
+  return httpCode == 200;
+}
+
+bool BackendClient::sendTelemetry(const String &hardwareId, float temperatureC,
+                                   float humidityPercent) {
+  JsonDocument doc;
+  doc["hardware_id"] = hardwareId;
+  doc["temperature"] = temperatureC;
+  doc["humidity"] = humidityPercent;
+  String body;
+  serializeJson(doc, body);
+
+  HTTPClient http;
+  http.setTimeout(kHttpTimeoutMs);
+  http.begin(baseUrl_ + "/api/v1/device/telemetry");
+  http.addHeader("Content-Type", "application/json");
+  int httpCode = http.POST(body);
+  http.end();
+
+  return httpCode == 201; // backend returns 201 Created for telemetry
+}
+
+CommandFetchResult BackendClient::getNextCommand(const String &hardwareId,
+                                                  BackendCommand &outCommand) {
+  HTTPClient http;
+  http.setTimeout(kHttpTimeoutMs);
+  http.begin(baseUrl_ + "/api/v1/device/commands/next?hardware_id=" + hardwareId);
+  int httpCode = http.GET();
+
+  if (httpCode != 200) {
+    http.end();
+    return CommandFetchResult::HttpError;
+  }
+
+  String body = http.getString();
+  http.end();
+
+  JsonDocument doc;
+  DeserializationError err = deserializeJson(doc, body);
+  if (err || doc.isNull()) {
+    return CommandFetchResult::None; // no pending command
+  }
+
+  if (doc["id"].isNull()) {
+    return CommandFetchResult::None; // malformed/unexpected body -- treat as none
+  }
+  outCommand.id = doc["id"].as<long>();
+
+  const char *type = doc["type"] | "";
+  outCommand.typeSupported = (strcmp(type, "set_state") == 0);
+
+  JsonObject payload = doc["payload"];
+  outCommand.hasPower = !payload["power"].isNull();
+  if (outCommand.hasPower) {
+    outCommand.power = payload["power"].as<bool>();
+  }
+  outCommand.hasTargetTemperature = !payload["target_temperature"].isNull();
+  if (outCommand.hasTargetTemperature) {
+    outCommand.targetTemperature = payload["target_temperature"].as<float>();
+  }
+
+  return CommandFetchResult::Available;
+}
+
+bool BackendClient::submitCommandResult(long commandId, CommandResultStatus status,
+                                         const AcDeviceState &resultState) {
+  JsonDocument doc;
+  doc["status"] = (status == CommandResultStatus::Completed) ? "completed" : "failed";
+
+  JsonObject result = doc["result"].to<JsonObject>();
+  if (resultState.power != PowerState::Unknown) {
+    result["power"] = (resultState.power == PowerState::On);
+  }
+  if (resultState.targetTemperatureC >= 0) {
+    result["target_temperature"] = resultState.targetTemperatureC;
+  }
+
+  String body;
+  serializeJson(doc, body);
+
+  HTTPClient http;
+  http.setTimeout(kHttpTimeoutMs);
+  http.begin(baseUrl_ + "/api/v1/device/commands/" + String(commandId) + "/result");
+  http.addHeader("Content-Type", "application/json");
+  int httpCode = http.POST(body);
+  http.end();
+
+  // 200 = acked; 409 = already resolved -- treat as handled, not an error
+  // (e.g. our own earlier ack attempt actually landed even though we
+  // didn't see the response, or genuine backend-side redelivery).
+  return httpCode == 200 || httpCode == 409;
+}

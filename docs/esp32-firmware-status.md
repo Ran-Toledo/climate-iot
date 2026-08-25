@@ -11,7 +11,7 @@ end of each stage.
 | 3 — IR transmitter | **Done** | 2026-08-25 | Confirmed working on hardware. See notes below. |
 | 4 — Combined local firmware architecture | **Done** | 2026-08-25 | Confirmed working on hardware. See notes below. |
 | 5 — Wi-Fi and backend registration | **Done** | 2026-08-26 | Confirmed working end-to-end. See notes below. |
-| 6 — Telemetry and commands | Not started | | |
+| 6 — Telemetry and commands | Implemented, awaiting hardware/network test | 2026-08-26 | See notes below. |
 | 7 — Reliability and final documentation | Not started | | |
 
 ## Stage 0 — findings summary
@@ -229,19 +229,91 @@ end of each stage.
   `../TODO.md` rather than implemented (backend change, out of scope
   without explicit approval).
 
+## Stage 6 — notes
+
+- **Backend change (explicitly approved by the user)**: `co2` removed
+  entirely from the telemetry contract — no CO2 sensor exists in this
+  project's hardware, and rather than send a fabricated value to satisfy
+  a required field, it was dropped from
+  `backend/app/schemas/telemetry.py` (`TelemetryIn`),
+  `backend/app/models/telemetry.py` (`Telemetry`),
+  `backend/app/services/telemetry_service.py`, a new Alembic migration
+  (`backend/alembic/versions/0002_drop_telemetry_co2.py`), and the Python
+  simulator (`device-simulator/device_simulator/{simulator,api_client}.py`)
+  so it keeps working unchanged (just without generating/sending a fake
+  co2 value). Root `README.md` and `esp32-firmware-plan.md`'s contract
+  table updated to match. **Requires running the new migration**
+  (`docker compose exec api python -m alembic upgrade head`) before
+  telemetry will work against an existing database — not run by the
+  assistant, since it mutates the user's running database.
+- New components: `lib/HeartbeatReporter/` (10s interval, matches
+  `HEARTBEAT_INTERVAL_SECONDS` default), `lib/TelemetryReporter/` (5s
+  interval matching `TELEMETRY_INTERVAL_SECONDS`, sends the latest valid
+  DHT11 reading — nothing sent before the first successful read),
+  `lib/CommandProcessor/` (3s poll matching
+  `COMMAND_POLL_INTERVAL_SECONDS`). `lib/BackendClient/` extended with
+  `sendHeartbeat()`, `sendTelemetry()`, `getNextCommand()`,
+  `submitCommandResult()` — mirrors
+  `device-simulator/device_simulator/api_client.py`'s `ApiClient` method
+  for method. None of these retry with backoff on failure (matching the
+  simulator's own behavior exactly: log and resume at the normal
+  interval) — only registration (Stage 5) uses backoff, since it alone
+  must succeed before anything else can proceed.
+- **Command translation — deliberate design choice (explicitly discussed
+  with the user)**: `AcTransmitter::sendState(power, targetTemperatureC)`
+  added, using `IRElectraAc`'s own `setPower()`/`setTemp()` encoders
+  (seeded from the known-good `kStatePowerOn` captured baseline so
+  mode/fan stay exactly as physically verified) rather than only
+  replaying the 5 exact Stage 2 captures. This lets the firmware honor
+  any backend-requested `target_temperature`, not just 22/23°C — the only
+  two values physically confirmed against the real AC to date. Other
+  values in the 16-30°C range rely on the library's tested encoder,
+  **not yet independently hardware-verified by this project** — flagged
+  here explicitly, not silently claimed as confirmed.
+- **Command validation (a deliberate improvement beyond simulator
+  parity — the simulator does none of this)**: `CommandProcessor`
+  rejects (marks `failed`, never transmits) a command whose `type` isn't
+  `set_state`, whose payload sets neither `power` nor
+  `target_temperature`, or whose `target_temperature` falls outside a
+  16-30°C sanity bound (a firmware-chosen bound, not a
+  protocol-verified limit).
+- **Command dedup**: a command id is remembered only after being both
+  transmitted *and* successfully acknowledged (200 or 409 — 409 means
+  "already resolved," treated as handled, not an error). A repeated
+  fetch of the same id is skipped, not re-transmitted. Known limitation,
+  explicitly not claimed as fully solved: if the AC transmission
+  succeeds but only the acknowledgment POST fails, the next 3s poll will
+  retry and could re-transmit. The plan's Stage 7 explicitly revisits
+  command dedup as a reliability hardening pass — this is intentionally
+  left there rather than over-engineered now.
+- Commands are never acknowledged as `completed` before
+  `AcTransmitter::sendState()` has actually been called and returned
+  `Ok` — a `Failed` transmission result acks as `failed`, not
+  `completed`.
+- DHT11 (Stage 1) and IR transmit/serial commands (Stages 3-4) are
+  unaffected — `HeartbeatReporter`/`TelemetryReporter`/`CommandProcessor`
+  are each gated by their own `millis()` interval and never block beyond
+  a single HTTP request's timeout (5s).
+- Not built/uploaded/monitored by the assistant, per the plan's hardware
+  interaction rule — waiting on the user to run the new migration, build,
+  upload, and confirm heartbeat/telemetry/commands work end-to-end
+  against the real backend and AC.
+
 ## Simulator parity checklist (living document — update in Stage 6)
 
 | Capability | Simulator | Firmware |
 |---|---|---|
-| Device identity | Configurable string via env | Not yet implemented |
-| Registration | `POST /device/register`, idempotent, infinite retry @3s | Not yet implemented |
-| Auth/tokens | None (by design) | Not yet implemented |
-| Heartbeat/status | `POST /device/heartbeat` every 10s | Not yet implemented |
-| Telemetry payload | `POST /device/telemetry` temp/humidity/co2 every 5s | Not yet implemented |
-| Command retrieval | `GET /device/commands/next` poll every 3s | Not yet implemented |
-| Command types | `set_state` {power?, target_temperature?} | Not yet implemented |
-| Command ack | `POST /device/commands/{id}/result` | Not yet implemented |
-| Retry/timeout | Fixed 5s timeout, no backoff (except reg. loop) | Not yet implemented |
+| Device identity | Configurable string via env | Stable eFuse-MAC-derived ID. **Confirmed on hardware** (Stage 5). |
+| Registration | `POST /device/register`, idempotent, infinite retry @3s | Implemented exactly per contract, bounded backoff instead of infinite tight loop. **Confirmed on hardware** (Stage 5, backend logs verified 200 OK). |
+| Auth/tokens | None (by design) | None — matches; nothing to invent. **Confirmed correct per Stage 0 discovery.** |
+| Heartbeat/status | `POST /device/heartbeat` every 10s | Implemented, same interval (`lib/HeartbeatReporter/`). **Not yet hardware-tested.** |
+| Telemetry payload | `POST /device/telemetry` temp/humidity/co2 every 5s | Implemented, same interval, real DHT11 data (`lib/TelemetryReporter/`). **`co2` removed from the contract this stage** (no sensor exists) — see Stage 6 notes. **Not yet hardware-tested.** |
+| Command retrieval | `GET /device/commands/next` poll every 3s | Implemented, same interval (`lib/CommandProcessor/`). **Not yet hardware-tested.** |
+| Command types | `set_state` {power?, target_temperature?} | Implemented via `IRElectraAc` semantic encoders, not just the 5 captured commands — see Stage 6 notes on hardware-verification scope. **Not yet hardware-tested.** |
+| Command ack | `POST /device/commands/{id}/result` | Implemented; never acks `completed` before transmission succeeds. **Not yet hardware-tested.** |
+| Command validation | None (simulator accepts any payload) | Firmware validates type/presence/temperature range before transmitting — a deliberate improvement beyond simulator parity, not required by the contract. |
+| Command dedup | N/A (simulator has no redelivery concern) | Implemented (transmit-and-ack-based, see Stage 6 notes for the known partial-ack-failure edge case deferred to Stage 7). **Not yet hardware-tested.** |
+| Retry/timeout | Fixed 5s timeout, no backoff (except reg. loop) | 5s HTTP timeout matches. Registration uses bounded backoff (Stage 5, confirmed). Heartbeat/telemetry/commands intentionally match the simulator's own no-backoff-on-failure behavior — Stage 7 is where the plan revisits this. |
 | Heartbeat/online derivation | Server-side, 30s threshold | N/A (server behavior) |
 
 ## Open questions for the user

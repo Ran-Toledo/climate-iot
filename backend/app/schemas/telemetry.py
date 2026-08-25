@@ -5,4 +5,3 @@ class TelemetryIn(BaseModel):
     hardware_id: str
     temperature: float
     humidity: float
-    co2: float

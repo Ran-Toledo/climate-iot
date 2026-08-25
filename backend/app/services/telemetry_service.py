@@ -9,7 +9,6 @@ async def record_telemetry(db: AsyncSession, device_id: int, payload: TelemetryI
         device_id=device_id,
         temperature=payload.temperature,
         humidity=payload.humidity,
-        co2=payload.co2,
     )
     db.add(telemetry)
     await db.commit()

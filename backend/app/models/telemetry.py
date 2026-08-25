@@ -13,7 +13,6 @@ class Telemetry(Base):
     device_id: Mapped[int] = mapped_column(ForeignKey("devices.id", ondelete="CASCADE"), index=True)
     temperature: Mapped[float] = mapped_column(Float)
     humidity: Mapped[float] = mapped_column(Float)
-    co2: Mapped[float] = mapped_column(Float)
     recorded_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), index=True
     )

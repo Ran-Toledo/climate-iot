@@ -11,10 +11,10 @@ enum class PowerState { Unknown, On, Off };
 // architecture) — this only reflects what we last told it to do.
 struct AcDeviceState {
   PowerState power = PowerState::Unknown;
-  // -1 = not yet known/set by this firmware. Only 22/23 are meaningful
-  // values today, matching the two temperature commands actually
-  // captured in Stage 2 (see captures/electra-ac-commands.md) — this
-  // firmware does not synthesize other setpoints.
+  // -1 = not yet known/set by this firmware. Set via the 5 captured
+  // commands (serial u/d/n/o/f, always 22/23 — see
+  // captures/electra-ac-commands.md) or via a backend set_state command
+  // (AcTransmitter::sendState(), any 16-30C value — Stage 6).
   int8_t targetTemperatureC = -1;
 };
 

@@ -25,14 +25,13 @@ class ApiClient:
         )
         response.raise_for_status()
 
-    async def send_telemetry(self, temperature: float, humidity: float, co2: float) -> None:
+    async def send_telemetry(self, temperature: float, humidity: float) -> None:
         response = await self._client.post(
             "/api/v1/device/telemetry",
             json={
                 "hardware_id": config.HARDWARE_ID,
                 "temperature": temperature,
                 "humidity": humidity,
-                "co2": co2,
             },
         )
         response.raise_for_status()

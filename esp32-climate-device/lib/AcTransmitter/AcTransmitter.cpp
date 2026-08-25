@@ -52,6 +52,17 @@ AcSendResult AcTransmitter::send(AcCommand command) {
   return AcSendResult::Ok;
 }
 
+AcSendResult AcTransmitter::sendState(bool power, uint8_t targetTemperatureC) {
+  // Seed from a known-good captured baseline (Cool/Medium fan, as
+  // physically verified) then mutate only power/temperature — the two
+  // fields the backend's ClimateState contract actually has.
+  irsend_.setRaw(kStatePowerOn);
+  irsend_.setPower(power);
+  irsend_.setTemp(targetTemperatureC);
+  irsend_.send(1);
+  return AcSendResult::Ok;
+}
+
 const char *AcTransmitter::commandName(AcCommand command) {
   switch (command) {
     case AcCommand::PowerOn:

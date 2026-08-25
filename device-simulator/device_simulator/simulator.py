@@ -15,7 +15,6 @@ class Simulator:
     target_temperature: float = config.STARTING_TEMPERATURE
     current_temperature: float = config.STARTING_TEMPERATURE
     humidity: float = 45.0
-    co2: float = 600.0
 
     def apply_desired_state(self, desired: ClimateState) -> dict:
         if desired.power is not None:
@@ -35,11 +34,9 @@ class Simulator:
             self.current_temperature = max(self.current_temperature - config.TEMPERATURE_STEP, goal)
 
         self.humidity = _clamp(self.humidity + random.uniform(-0.5, 0.5), 30.0, 70.0)
-        self.co2 = _clamp(self.co2 + random.uniform(-10.0, 10.0), 400.0, 2000.0)
 
     def telemetry(self) -> dict:
         return {
             "temperature": round(self.current_temperature, 2),
             "humidity": round(self.humidity, 1),
-            "co2": round(self.co2, 1),
         }

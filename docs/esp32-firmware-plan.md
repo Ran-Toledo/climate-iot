@@ -76,7 +76,7 @@ does and what the firmware must replicate.
 | Registration | `POST /api/v1/device/register {hardware_id, device_type, name}`. Idempotent: re-registering an existing `hardware_id` just updates `device_type`/`name`. |
 | Auth | **None.** The device API trusts `hardware_id` in the body. No token is issued or required — confirmed both in code and in the README ("no auth" is explicitly out of scope). Do not invent one. |
 | Heartbeat / status | `POST /api/v1/device/heartbeat {hardware_id}`. Server derives `online` as `now - last_heartbeat_at < 30s` (hardcoded, not configurable). No richer status enum, no last-will message. |
-| Telemetry | `POST /api/v1/device/telemetry {hardware_id, temperature, humidity, co2}` — all three required floats. No client timestamp. |
+| Telemetry | `POST /api/v1/device/telemetry {hardware_id, temperature, humidity}` — both required floats. No client timestamp. `co2` was removed from this contract at Stage 6 (backend + simulator change, explicitly approved) since no CO2 sensor exists in this project's hardware — see `esp32-firmware-status.md` Stage 6 notes. |
 | Command retrieval | `GET /api/v1/device/commands/next?hardware_id=...` — returns the single oldest pending command or `null`. **Not marked in-flight on fetch** — redelivery is possible if polled twice before ack; dedupe on the client is worthwhile. |
 | Command shape | Only `type: "set_state"` exists. Payload: `{power?: bool, target_temperature?: float}`, sparse/partial, merged server-side into device state. |
 | Command ack | `POST /api/v1/device/commands/{id}/result {status: "completed"|"failed", result?: dict}`. Server 409s if the command was already resolved (guards double-ack, not double-delivery). |

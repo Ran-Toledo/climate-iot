@@ -1,14 +1,18 @@
-// Stage 5: adds Wi-Fi connectivity and backend registration on top of the
-// Stage 4 architecture. Registration follows the discovered backend
-// contract exactly (POST /api/v1/device/register, no auth, idempotent) —
-// see docs/esp32-firmware-plan.md. Wi-Fi credentials and the backend URL
-// live in include/secrets.h (gitignored); copy include/secrets.example.h
-// to create it.
+// Stage 6: adds telemetry and command handling on top of Stage 5's
+// Wi-Fi/registration. Implements the remaining simulator-parity
+// capabilities (see docs/esp32-firmware-status.md parity checklist):
+// heartbeat, telemetry, command polling, and set_state -> IR translation.
 //
-// The ESP32 cannot reach "localhost" — that means the device itself, not
-// your computer. BACKEND_BASE_URL in secrets.h must be your computer's
-// LAN IP and the backend's port (e.g. "http://192.168.1.50:8000"), with
-// the backend listening on 0.0.0.0 rather than 127.0.0.1.
+// set_state commands are translated via AcTransmitter::sendState(), which
+// uses IRElectraAc's own setPower()/setTemp() encoders rather than only
+// replaying the 5 exact captured commands — this lets arbitrary requested
+// temperatures be honored, at the cost of only 22/23C being physically
+// hardware-verified (see AcTransmitter.h). This firmware also validates
+// command payloads (type, presence, temperature range) before
+// transmitting, which the Python simulator does not do.
+//
+// Wi-Fi credentials and the backend URL live in include/secrets.h
+// (gitignored); copy include/secrets.example.h to create it.
 
 #include <Arduino.h>
 #include "ClimateSensor.h"
@@ -18,6 +22,9 @@
 #include "DeviceIdentity.h"
 #include "WifiConnection.h"
 #include "BackendClient.h"
+#include "HeartbeatReporter.h"
+#include "TelemetryReporter.h"
+#include "CommandProcessor.h"
 #include "secrets.h"
 
 #define DHT_PIN 4
@@ -34,7 +41,14 @@ AcDeviceState acState;
 
 WifiConnection wifi(WIFI_SSID, WIFI_PASSWORD);
 BackendClient backendClient(BACKEND_BASE_URL);
+HeartbeatReporter heartbeatReporter(backendClient);
+TelemetryReporter telemetryReporter(backendClient);
+CommandProcessor commandProcessor(backendClient, acTransmitter, acState);
 String hardwareId;
+
+bool hasClimateReading = false;
+float lastTemperatureC = 0;
+float lastHumidityPercent = 0;
 
 void handleClimateSensor() {
   ClimateReading reading;
@@ -46,6 +60,10 @@ void handleClimateSensor() {
     Serial.println("DHT11 read failed (sensor not responding or invalid data)");
     return;
   }
+
+  hasClimateReading = true;
+  lastTemperatureC = reading.temperatureC;
+  lastHumidityPercent = reading.humidityPercent;
 
   Serial.print("Temperature: ");
   Serial.print(reading.temperatureC);
@@ -76,9 +94,19 @@ void handleSerialCommand() {
 void handleNetworking() {
   unsigned long now = millis();
   wifi.update(now);
-  if (wifi.isConnected() && !backendClient.isRegistered()) {
-    backendClient.update(now, hardwareId, DEVICE_TYPE, DEVICE_NAME);
+  if (!wifi.isConnected()) {
+    return;
   }
+
+  if (!backendClient.isRegistered()) {
+    backendClient.update(now, hardwareId, DEVICE_TYPE, DEVICE_NAME);
+    return;
+  }
+
+  heartbeatReporter.update(now, hardwareId);
+  telemetryReporter.update(now, hardwareId, hasClimateReading, lastTemperatureC,
+                            lastHumidityPercent);
+  commandProcessor.update(now, hardwareId);
 }
 
 void setup() {
@@ -94,7 +122,7 @@ void setup() {
   wifi.begin();
 
   Serial.println(
-      "Stage 5: DHT11 (GPIO4) + IR transmitter (GPIO6) + Wi-Fi/registration starting...");
+      "Stage 6: DHT11 + IR transmitter + Wi-Fi/registration + telemetry/commands starting...");
   printSerialHelp();
 }
 

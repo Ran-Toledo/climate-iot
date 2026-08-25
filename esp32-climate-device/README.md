@@ -12,10 +12,10 @@ NeoPixel test project) or with the backend/simulator.
 
 ## Status
 
-Implementation proceeds in gated stages. Stages 1-4 (DHT11 sensor, IR
-receiver, IR transmitter, combined local architecture) are confirmed
-working on hardware. Stage 5 (Wi-Fi + backend registration) is implemented
-and awaiting hardware/network verification. See:
+Implementation proceeds in gated stages. Stages 1-5 (DHT11 sensor, IR
+receiver, IR transmitter, combined local architecture, Wi-Fi + backend
+registration) are confirmed working on hardware. Stage 6 (telemetry and
+commands) is implemented and awaiting hardware/network verification. See:
 
 - [`../docs/esp32-firmware-plan.md`](../docs/esp32-firmware-plan.md) — full
   staged implementation plan, safety rules, hardware pinout, and the
@@ -294,3 +294,81 @@ working normally in the meantime.
 - [ ] DHT11 readings and serial AC commands (`u`/`d`/`n`/`o`/`f`) still
       work throughout, including while Wi-Fi/registration are retrying.
 - [ ] No Wi-Fi password appears anywhere in the serial output.
+
+## Stage 6 — Telemetry and commands
+
+Implements the remaining simulator-parity capabilities: heartbeat,
+telemetry, and command polling/execution. Runs after Wi-Fi connects and
+registration succeeds.
+
+```
+lib/
+  HeartbeatReporter/   POST /device/heartbeat every 10s
+  TelemetryReporter/   POST /device/telemetry every 5s, using the latest real DHT11 reading
+  CommandProcessor/    GET /device/commands/next every 3s -> validate -> IR transmit -> POST result
+```
+
+**Backend change made this stage (explicitly approved):** the telemetry
+contract's `co2` field was removed entirely —
+`{hardware_id, temperature, humidity}` only now. This project's hardware
+has no CO2 sensor (only DHT11), and rather than fabricate a fake reading
+to satisfy a required field, `co2` was dropped from
+`backend/app/schemas/telemetry.py`, the `Telemetry` DB model, a new
+Alembic migration (`0002_drop_telemetry_co2.py`), and the Python
+simulator (`device-simulator/`). **Run the new migration before testing:**
+`docker compose exec api python -m alembic upgrade head`.
+
+**Command translation:** `set_state` commands
+(`{power?: bool, target_temperature?: float}`) are validated (type must
+be `set_state`; payload must set at least one field; `target_temperature`
+must be 16-30°C) then transmitted via `AcTransmitter::sendState()`, which
+uses `IRElectraAc`'s own `setPower()`/`setTemp()` encoders rather than
+only replaying the 5 exact commands captured in Stage 2. This lets the
+firmware honor any requested temperature in range, not just 22/23°C — but
+only 22/23°C have been physically confirmed against the real AC; other
+values rely on the library's tested encoder rather than firmware-specific
+hardware verification. A command is never acknowledged as completed
+before the IR transmission has actually been issued.
+
+**Command dedup:** a fetched command's id is compared against the last
+one this firmware successfully transmitted *and* acknowledged; a repeat
+id is skipped rather than re-transmitted. Known edge case: if the AC
+transmission succeeds but the acknowledgment POST itself fails, the next
+poll will retry and could re-transmit — Stage 7 (reliability) is where
+the plan revisits command dedup further.
+
+Expected serial output once running normally:
+
+```
+Command: set power=on, target_temperature=24
+```
+
+(Heartbeat/telemetry only print on failure — "quiet" success matches the
+simulator's own logging style, avoiding log spam every 5-10s.)
+
+### Verification checklist
+
+- [ ] Ran `docker compose exec api python -m alembic upgrade head` after
+      pulling the `co2`-removal migration.
+- [ ] `pio run` builds without errors.
+- [ ] Heartbeat: device shows as `online: true` via
+      `GET /api/v1/management/devices` within ~30s of boot.
+- [ ] Telemetry: `GET /api/v1/management/devices/{id}` or direct DB check
+      shows real temperature/humidity values arriving every ~5s.
+- [ ] Commands: push a command via
+      `POST /api/v1/management/devices/{id}/commands` (see root
+      `README.md`'s demo walkthrough) with `{"power": true,
+      "target_temperature": 24}` and confirm:
+      - [ ] The AC actually reacts (power on, temp changes).
+      - [ ] Command status flips to `completed` within one poll cycle
+            (~3s).
+      - [ ] `result` in the command detail reflects what was actually
+            sent.
+- [ ] Push an invalid command (e.g. `target_temperature: 99`) — via
+      direct API call, since the management API's own validation may
+      block obviously-bad values first — and confirm the firmware logs a
+      rejection and marks it `failed` rather than transmitting.
+- [ ] DHT11 reads and serial AC commands (`u`/`d`/`n`/`o`/`f`) keep
+      working throughout.
+- [ ] Update the parity checklist in
+      `../docs/esp32-firmware-status.md` with your test evidence.
