@@ -34,6 +34,14 @@ async def get_device(device_id: int, db: AsyncSession = Depends(get_db)):
     )
 
 
+@router.delete("/devices/{device_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_device(device_id: int, db: AsyncSession = Depends(get_db)):
+    device = await management_service.get_device(db, device_id)
+    if device is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="device not found")
+    await management_service.delete_device(db, device)
+
+
 @router.post(
     "/devices/{device_id}/commands", response_model=CommandOut, status_code=status.HTTP_201_CREATED
 )

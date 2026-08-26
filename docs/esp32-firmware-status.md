@@ -11,7 +11,7 @@ end of each stage.
 | 3 — IR transmitter | **Done** | 2026-08-25 | Confirmed working on hardware. See notes below. |
 | 4 — Combined local firmware architecture | **Done** | 2026-08-25 | Confirmed working on hardware. See notes below. |
 | 5 — Wi-Fi and backend registration | **Done** | 2026-08-26 | Confirmed working end-to-end. See notes below. |
-| 6 — Telemetry and commands | Implemented, awaiting hardware/network test | 2026-08-26 | See notes below. |
+| 6 — Telemetry and commands | **Done** | 2026-08-26 | Confirmed working end-to-end. See notes below. |
 | 7 — Reliability and final documentation | Not started | | |
 
 ## Stage 0 — findings summary
@@ -294,10 +294,81 @@ end of each stage.
   unaffected — `HeartbeatReporter`/`TelemetryReporter`/`CommandProcessor`
   are each gated by their own `millis()` interval and never block beyond
   a single HTTP request's timeout (5s).
+
+**Post-implementation addendum (2026-08-26, before hardware testing):**
+Two further backend changes, both explicitly requested/approved by the
+user before this stage was hardware-tested:
+  - `target_temperature` narrowed from `float` to `int` in
+    `ClimateState` (`backend/app/schemas/device_state.py`, and the
+    simulator's own mirrored model in
+    `device-simulator/device_simulator/models.py`). Rationale: no real
+    AC hardware supports fractional-degree setpoints, so the API
+    contract was narrowed to match reality rather than have the
+    firmware silently discard precision nothing downstream could use.
+    No DB migration needed — `desired_state`/`reported_state`/`payload`
+    are untyped JSONB columns; only the Pydantic validation boundary
+    changed. Firmware updated to match: `BackendCommand::targetTemperature`
+    (`lib/BackendClient/BackendClient.h`) changed from `float` to `int`,
+    parsed via `.as<int>()` instead of `.as<float>()`; `CommandProcessor`'s
+    `kMinTempC`/`kMaxTempC` bounds changed from `float` to `int`; and the
+    `+0.5f`-before-truncating rounding trick (needed only for fractional
+    input) was removed since the contract no longer produces it.
+    `device-simulator`'s own `Simulator.target_temperature` field
+    likewise changed `float` -> `int` (`current_temperature` stays
+    `float` — it's a continuously-converging simulated sensor reading,
+    not a setpoint, and is unaffected).
+  - Added `DELETE /api/v1/management/devices/{id}` (`backend/app/api/
+    management.py`, `backend/app/services/management_service.py`) —
+    closes the gap noted in `../TODO.md` during Stage 5. No new
+    migration needed; related `device_states`/`telemetry`/`commands`
+    rows cascade-delete via existing FK `ondelete="CASCADE"`.
+  - Four further backend gaps noticed during this review (no automated
+    tests, `CommandCreate.type` not restricted to a `Literal`,
+    `CommandResultIn.result` untyped, no pagination on
+    `GET /management/devices`) were intentionally **not** implemented —
+    logged in `../TODO.md` instead, per explicit user instruction.
+  - None of this has been hardware/network tested yet — bundled into
+    the same pending verification pass as the rest of Stage 6.
 - Not built/uploaded/monitored by the assistant, per the plan's hardware
-  interaction rule — waiting on the user to run the new migration, build,
-  upload, and confirm heartbeat/telemetry/commands work end-to-end
-  against the real backend and AC.
+  interaction rule — user built, uploaded, and tested themselves, after
+  wiping the DB (`docker compose down -v` + fresh `up` + re-running both
+  migrations) for a clean start on the new schema.
+- **Confirmed end-to-end on real hardware, full pass:**
+  - Registration: re-confirmed on the fresh DB, same stable
+    `esp32-449dd98fcba4` hardware ID as before the wipe (eFuse-MAC
+    derivation is unaffected by DB state, as expected).
+  - Heartbeat: `GET /management/devices` showed `online: true` with a
+    fresh `last_heartbeat_at`.
+  - Telemetry: verified via direct DB query — real temperature/humidity
+    rows landing every ~5s.
+  - Commands: a `{"power": true, "target_temperature": 24}` command was
+    pushed via the management API; firmware logged
+    `Command: set power=on, target_temperature=24` / `Transmit done.`,
+    the physical AC reacted correctly, and the command status flipped to
+    `completed` with a matching `result` — all within one ~3s poll
+    cycle.
+  - Invalid-command rejection (`target_temperature: 99`, outside the
+    16-30°C sanity bound) was also tested: firmware logged the
+    rejection, did not transmit, and acked `failed`.
+  - DHT11 readings and serial AC commands (`u`/`d`/`n`/`o`/`f`) continued
+    working unaffected throughout.
+  - This is also the first hardware confirmation of the Stage 6
+    same-day follow-up changes (`target_temperature` as `int`,
+    `co2` removal, `DELETE /devices/{id}`) — all exercised successfully
+    as part of this same test pass.
+- **Minor post-test cleanup**: removed the `printSerialHelp()` call from
+  `setup()` (`src/main.cpp`) — the boot log no longer dumps the serial
+  command cheat-sheet on every reset now that backend-driven commands are
+  the primary path. Discoverability is preserved: `SerialDiagnostics`'s
+  existing fallback still prints the same help text if an unrecognized
+  key is typed.
+- Debugging note for future reference: on this board (native USB CDC,
+  no separate UART bridge chip), a hardware reset via the `EN`/`RST`
+  button — not just an upload — also makes the USB peripheral
+  disconnect/re-enumerate. `pio device monitor` does not always
+  auto-recover from that; closing and reopening the monitor after a
+  reset (or opening it *before* resetting) is the reliable way to catch
+  full boot-sequence output.
 
 ## Simulator parity checklist (living document — update in Stage 6)
 
@@ -306,13 +377,13 @@ end of each stage.
 | Device identity | Configurable string via env | Stable eFuse-MAC-derived ID. **Confirmed on hardware** (Stage 5). |
 | Registration | `POST /device/register`, idempotent, infinite retry @3s | Implemented exactly per contract, bounded backoff instead of infinite tight loop. **Confirmed on hardware** (Stage 5, backend logs verified 200 OK). |
 | Auth/tokens | None (by design) | None — matches; nothing to invent. **Confirmed correct per Stage 0 discovery.** |
-| Heartbeat/status | `POST /device/heartbeat` every 10s | Implemented, same interval (`lib/HeartbeatReporter/`). **Not yet hardware-tested.** |
-| Telemetry payload | `POST /device/telemetry` temp/humidity/co2 every 5s | Implemented, same interval, real DHT11 data (`lib/TelemetryReporter/`). **`co2` removed from the contract this stage** (no sensor exists) — see Stage 6 notes. **Not yet hardware-tested.** |
-| Command retrieval | `GET /device/commands/next` poll every 3s | Implemented, same interval (`lib/CommandProcessor/`). **Not yet hardware-tested.** |
-| Command types | `set_state` {power?, target_temperature?} | Implemented via `IRElectraAc` semantic encoders, not just the 5 captured commands — see Stage 6 notes on hardware-verification scope. **Not yet hardware-tested.** |
-| Command ack | `POST /device/commands/{id}/result` | Implemented; never acks `completed` before transmission succeeds. **Not yet hardware-tested.** |
-| Command validation | None (simulator accepts any payload) | Firmware validates type/presence/temperature range before transmitting — a deliberate improvement beyond simulator parity, not required by the contract. |
-| Command dedup | N/A (simulator has no redelivery concern) | Implemented (transmit-and-ack-based, see Stage 6 notes for the known partial-ack-failure edge case deferred to Stage 7). **Not yet hardware-tested.** |
+| Heartbeat/status | `POST /device/heartbeat` every 10s | Implemented, same interval (`lib/HeartbeatReporter/`). **Confirmed on hardware** — `online: true` via the management API. |
+| Telemetry payload | `POST /device/telemetry` temp/humidity every 5s | Implemented, same interval, real DHT11 data (`lib/TelemetryReporter/`). `co2` removed from the contract this stage (no sensor exists) — see Stage 6 notes. **Confirmed on hardware** — real rows verified in the DB every ~5s. |
+| Command retrieval | `GET /device/commands/next` poll every 3s | Implemented, same interval (`lib/CommandProcessor/`). **Confirmed on hardware.** |
+| Command types | `set_state` {power?, target_temperature?: int} | Implemented via `IRElectraAc` semantic encoders, not just the 5 captured commands. **Confirmed on hardware** — a `{power: true, target_temperature: 24}` command correctly moved the real AC; 22/23°C remain the only individually pre-verified exact values, 24°C is now also confirmed working via the semantic encoder path. |
+| Command ack | `POST /device/commands/{id}/result` | Implemented; never acks `completed` before transmission succeeds. **Confirmed on hardware** — status flipped to `completed` with a matching `result` within one poll cycle. |
+| Command validation | None (simulator accepts any payload) | Firmware validates type/presence/temperature range before transmitting — a deliberate improvement beyond simulator parity, not required by the contract. **Confirmed on hardware** — an out-of-range command (`target_temperature: 99`) was rejected without transmitting and acked `failed`. |
+| Command dedup | N/A (simulator has no redelivery concern) | Implemented (transmit-and-ack-based, see Stage 6 notes for the known partial-ack-failure edge case deferred to Stage 7). Exercised during testing (no duplicate transmissions observed); the partial-ack-failure edge case itself was not specifically forced/tested. |
 | Retry/timeout | Fixed 5s timeout, no backoff (except reg. loop) | 5s HTTP timeout matches. Registration uses bounded backoff (Stage 5, confirmed). Heartbeat/telemetry/commands intentionally match the simulator's own no-backoff-on-failure behavior — Stage 7 is where the plan revisits this. |
 | Heartbeat/online derivation | Server-side, 30s threshold | N/A (server behavior) |
 

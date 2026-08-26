@@ -14,6 +14,13 @@ async def get_device(db: AsyncSession, device_id: int) -> Device | None:
     return await db.get(Device, device_id)
 
 
+async def delete_device(db: AsyncSession, device: Device) -> None:
+    # device_states/telemetry/commands rows cascade-delete via their FK's
+    # ondelete="CASCADE" (see the 0001 migration) -- no manual cleanup needed.
+    await db.delete(device)
+    await db.commit()
+
+
 async def get_device_state(db: AsyncSession, device_id: int) -> DeviceState | None:
     result = await db.execute(select(DeviceState).where(DeviceState.device_id == device_id))
     return result.scalar_one_or_none()

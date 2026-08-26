@@ -12,7 +12,7 @@ struct BackendCommand {
   bool hasPower = false;
   bool power = false;
   bool hasTargetTemperature = false;
-  float targetTemperature = 0;
+  int targetTemperature = 0; // whole degrees C -- the API contract has no fractional setpoints
 };
 
 enum class CommandFetchResult { None, Available, HttpError };

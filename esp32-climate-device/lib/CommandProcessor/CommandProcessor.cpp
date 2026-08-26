@@ -5,8 +5,8 @@ constexpr unsigned long kPollIntervalMs = 3000; // matches COMMAND_POLL_INTERVAL
 // Sanity bound, not a protocol-verified limit: only 22/23C were
 // physically confirmed on real hardware (Stage 2-3). Other values in
 // this range rely on IRElectraAc's own tested setTemp() encoder.
-constexpr float kMinTempC = 16.0f;
-constexpr float kMaxTempC = 30.0f;
+constexpr int kMinTempC = 16;
+constexpr int kMaxTempC = 30;
 }  // namespace
 
 CommandProcessor::CommandProcessor(BackendClient &backendClient, AcTransmitter &acTransmitter,
@@ -62,7 +62,7 @@ void CommandProcessor::update(unsigned long nowMs, const String &hardwareId) {
 
   bool power = command.hasPower ? command.power : (acState_.power == PowerState::On);
   uint8_t targetTempC = command.hasTargetTemperature
-                            ? static_cast<uint8_t>(command.targetTemperature + 0.5f)
+                            ? static_cast<uint8_t>(command.targetTemperature)
                             : (acState_.targetTemperatureC > 0
                                    ? static_cast<uint8_t>(acState_.targetTemperatureC)
                                    : 23);

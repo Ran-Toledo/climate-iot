@@ -127,7 +127,7 @@ CommandFetchResult BackendClient::getNextCommand(const String &hardwareId,
   }
   outCommand.hasTargetTemperature = !payload["target_temperature"].isNull();
   if (outCommand.hasTargetTemperature) {
-    outCommand.targetTemperature = payload["target_temperature"].as<float>();
+    outCommand.targetTemperature = payload["target_temperature"].as<int>();
   }
 
   return CommandFetchResult::Available;

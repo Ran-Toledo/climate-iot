@@ -119,7 +119,7 @@ curl -s http://localhost:8080/api/v1/management/devices/1 | python -m json.tool
 ```
 
 `desired_state` and `reported_state` should both show
-`{"power": true, "target_temperature": 22.0}`.
+`{"power": true, "target_temperature": 22}`.
 
 **5. Watch the room actually converge (not just the setting)**
 
@@ -151,7 +151,8 @@ Ctrl+C to stop following logs.
 |---|---|---|
 | GET | `/api/v1/management/devices` | — |
 | GET | `/api/v1/management/devices/{id}` | — |
-| POST | `/api/v1/management/devices/{id}/commands` | `{type?, payload: {power?, target_temperature?}}` |
+| DELETE | `/api/v1/management/devices/{id}` | — |
+| POST | `/api/v1/management/devices/{id}/commands` | `{type?, payload: {power?, target_temperature?: int}}` |
 | GET | `/api/v1/management/commands/{id}` | — |
 
 ## Environment variables

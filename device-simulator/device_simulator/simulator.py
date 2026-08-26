@@ -12,7 +12,11 @@ def _clamp(value: float, low: float, high: float) -> float:
 @dataclass
 class Simulator:
     power: bool = False
-    target_temperature: float = config.STARTING_TEMPERATURE
+    # int: matches the API's target_temperature contract (no AC hardware
+    # supports fractional-degree setpoints). current_temperature stays
+    # float -- it's a continuously-converging simulated sensor reading,
+    # not a setpoint.
+    target_temperature: int = int(config.STARTING_TEMPERATURE)
     current_temperature: float = config.STARTING_TEMPERATURE
     humidity: float = 45.0
 

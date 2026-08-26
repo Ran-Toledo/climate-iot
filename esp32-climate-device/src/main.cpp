@@ -123,7 +123,6 @@ void setup() {
 
   Serial.println(
       "Stage 6: DHT11 + IR transmitter + Wi-Fi/registration + telemetry/commands starting...");
-  printSerialHelp();
 }
 
 void loop() {

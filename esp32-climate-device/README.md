@@ -12,10 +12,10 @@ NeoPixel test project) or with the backend/simulator.
 
 ## Status
 
-Implementation proceeds in gated stages. Stages 1-5 (DHT11 sensor, IR
+Implementation proceeds in gated stages. Stages 1-6 (DHT11 sensor, IR
 receiver, IR transmitter, combined local architecture, Wi-Fi + backend
-registration) are confirmed working on hardware. Stage 6 (telemetry and
-commands) is implemented and awaiting hardware/network verification. See:
+registration, telemetry and commands) are all confirmed working end-to-end
+on hardware. See:
 
 - [`../docs/esp32-firmware-plan.md`](../docs/esp32-firmware-plan.md) — full
   staged implementation plan, safety rules, hardware pinout, and the
@@ -319,7 +319,7 @@ simulator (`device-simulator/`). **Run the new migration before testing:**
 `docker compose exec api python -m alembic upgrade head`.
 
 **Command translation:** `set_state` commands
-(`{power?: bool, target_temperature?: float}`) are validated (type must
+(`{power?: bool, target_temperature?: int}`) are validated (type must
 be `set_state`; payload must set at least one field; `target_temperature`
 must be 16-30°C) then transmitted via `AcTransmitter::sendState()`, which
 uses `IRElectraAc`'s own `setPower()`/`setTemp()` encoders rather than
