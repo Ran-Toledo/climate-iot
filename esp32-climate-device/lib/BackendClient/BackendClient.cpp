@@ -7,6 +7,17 @@ namespace {
 constexpr unsigned long kInitialBackoffMs = 3000;
 constexpr unsigned long kMaxBackoffMs = 30000;
 constexpr int kHttpTimeoutMs = 5000; // matches the simulator's fixed 5s timeout
+
+// +/-20% jitter so a fleet of devices that all lost the backend at the
+// same moment (e.g. it was restarting) don't all retry in lockstep.
+unsigned long jitteredBackoff(unsigned long backoffMs) {
+  long jitterRangeMs = static_cast<long>(backoffMs / 5);
+  if (jitterRangeMs <= 0) {
+    return backoffMs;
+  }
+  long jitter = random(0, 2 * jitterRangeMs + 1) - jitterRangeMs;
+  return backoffMs + jitter;
+}
 }  // namespace
 
 BackendClient::BackendClient(const String &baseUrl)
@@ -52,7 +63,7 @@ void BackendClient::update(unsigned long nowMs, const String &hardwareId, const 
   Serial.print(backoffMs_ / 1000);
   Serial.println("s");
 
-  nextAttemptMs_ = nowMs + backoffMs_;
+  nextAttemptMs_ = nowMs + jitteredBackoff(backoffMs_);
   backoffMs_ = (backoffMs_ * 2 > kMaxBackoffMs) ? kMaxBackoffMs : backoffMs_ * 2;
 }
 

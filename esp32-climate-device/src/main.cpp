@@ -1,7 +1,7 @@
-// Stage 6: adds telemetry and command handling on top of Stage 5's
-// Wi-Fi/registration. Implements the remaining simulator-parity
-// capabilities (see docs/esp32-firmware-status.md parity checklist):
-// heartbeat, telemetry, command polling, and set_state -> IR translation.
+// Final firmware (Stage 6 capabilities, Stage 7 reliability hardening).
+// See README.md's Architecture section for the full execution-flow
+// writeup; this is the orchestration entry point only -- no hardware or
+// network logic lives here, it's all in lib/.
 //
 // set_state commands are translated via AcTransmitter::sendState(), which
 // uses IRElectraAc's own setPower()/setTemp() encoders rather than only
@@ -122,7 +122,7 @@ void setup() {
   wifi.begin();
 
   Serial.println(
-      "Stage 6: DHT11 + IR transmitter + Wi-Fi/registration + telemetry/commands starting...");
+      "ESP32 climate device starting: DHT11 + IR transmitter + Wi-Fi/registration + telemetry/commands...");
 }
 
 void loop() {

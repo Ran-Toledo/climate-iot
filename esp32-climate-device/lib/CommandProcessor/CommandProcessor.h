@@ -9,8 +9,13 @@
 // the payload, translates it into an IR transmission via
 // AcTransmitter::sendState(), and acknowledges the result — never
 // acknowledging success before the transmission has actually been
-// issued. Dedupes by command id so a redelivered/refetched command isn't
-// re-transmitted to the AC a second time.
+// issued.
+//
+// Dedup tracks "transmitted" and "acked" separately: if a command was
+// already sent to the AC but the acknowledgment POST failed (network
+// blip), a re-fetch of the same command only retries the ack — it is
+// never re-transmitted. This closes the Stage 6 edge case where a
+// partial ack failure could cause a duplicate IR send.
 class CommandProcessor {
  public:
   CommandProcessor(BackendClient &backendClient, AcTransmitter &acTransmitter,
@@ -23,5 +28,6 @@ class CommandProcessor {
   AcTransmitter &acTransmitter_;
   AcDeviceState &acState_;
   unsigned long lastPollMs_;
-  long lastHandledCommandId_;
+  long lastTransmittedCommandId_; // sent to the AC; ack may still be pending
+  long lastHandledCommandId_;     // sent AND successfully acked -- fully done
 };

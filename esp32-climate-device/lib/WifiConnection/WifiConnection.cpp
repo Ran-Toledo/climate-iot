@@ -5,6 +5,17 @@
 namespace {
 constexpr unsigned long kInitialBackoffMs = 1000;
 constexpr unsigned long kMaxBackoffMs = 30000;
+
+// +/-20% jitter so a fleet of devices that dropped Wi-Fi at the same
+// moment (e.g. a router blip) don't all retry in lockstep.
+unsigned long jitteredBackoff(unsigned long backoffMs) {
+  long jitterRangeMs = static_cast<long>(backoffMs / 5);
+  if (jitterRangeMs <= 0) {
+    return backoffMs;
+  }
+  long jitter = random(0, 2 * jitterRangeMs + 1) - jitterRangeMs;
+  return backoffMs + jitter;
+}
 }  // namespace
 
 WifiConnection::WifiConnection(const char *ssid, const char *password)
@@ -53,7 +64,7 @@ void WifiConnection::update(unsigned long nowMs) {
   WiFi.disconnect();
   WiFi.begin(ssid_, password_);
 
-  nextAttemptMs_ = nowMs + backoffMs_;
+  nextAttemptMs_ = nowMs + jitteredBackoff(backoffMs_);
   backoffMs_ = (backoffMs_ * 2 > kMaxBackoffMs) ? kMaxBackoffMs : backoffMs_ * 2;
 }
 

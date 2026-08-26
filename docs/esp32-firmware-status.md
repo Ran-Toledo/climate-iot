@@ -12,7 +12,7 @@ end of each stage.
 | 4 — Combined local firmware architecture | **Done** | 2026-08-25 | Confirmed working on hardware. See notes below. |
 | 5 — Wi-Fi and backend registration | **Done** | 2026-08-26 | Confirmed working end-to-end. See notes below. |
 | 6 — Telemetry and commands | **Done** | 2026-08-26 | Confirmed working end-to-end. See notes below. |
-| 7 — Reliability and final documentation | Not started | | |
+| 7 — Reliability and final documentation | Implemented, awaiting hardware verification | 2026-08-26 | See notes below. |
 
 ## Stage 0 — findings summary
 
@@ -370,6 +370,57 @@ user before this stage was hardware-tested:
   reset (or opening it *before* resetting) is the reliable way to catch
   full boot-sequence output.
 
+## Stage 7 — notes
+
+- **Jittered backoff**: `WifiConnection::update()` and
+  `BackendClient::update()` (registration) both now apply +/-20% random
+  jitter (via Arduino's `random()`) on top of the existing exponential
+  schedule before scheduling the next attempt — avoids synchronized
+  retries across a fleet after a shared outage. Heartbeat/telemetry/
+  command-poll intervals were deliberately left unchanged (fixed cadence,
+  no backoff), matching the simulator's own behavior and already bounded
+  by the interval itself rather than being a tight loop.
+- **Command dedup hardened**: `CommandProcessor` (`lib/CommandProcessor/`)
+  now has two id trackers instead of one —
+  `lastTransmittedCommandId_` (set immediately after a successful IR
+  transmission, before attempting the ack) and `lastHandledCommandId_`
+  (set only after a successful ack, 200 or 409). A re-fetched command
+  matching `lastTransmittedCommandId_` but not yet
+  `lastHandledCommandId_` now retries *only* the acknowledgment POST —
+  it is never sent to the AC a second time. This closes the specific
+  Stage 6 edge case (documented then, fixed now): AC transmission
+  succeeds, ack POST fails, next poll re-fetches the same still-pending
+  command.
+- **Audited, no code change needed** (verified correct from earlier
+  stages): request timeouts (5s, every `HTTPClient` call via
+  `setTimeout()`), DHT11 failure handling (`isnan()` check, Stage 1),
+  malformed JSON response handling (`getNextCommand()`'s
+  `deserializeJson` error + null checks, Stage 6), no secrets ever
+  logged (grepped `lib/` for `password_`/`WIFI_PASSWORD` — only ever
+  passed to `WiFi.begin()`, never `Serial`), no unbounded
+  queues/allocation (all HTTP request/response objects — `JsonDocument`,
+  `String` bodies, `HTTPClient` instances — are function-local and
+  released every call; no growing global state), safe post-reboot
+  behavior (nothing persisted across reboots — identity re-derives
+  deterministically from the eFuse MAC, registration is idempotent, and
+  any command still `pending` at reboot is simply picked up fresh on the
+  next poll, with no local state that could be stale or need recovery).
+- **Final documentation**: `esp32-climate-device/README.md` gained new
+  "Architecture" (component list + execution-flow writeup) and
+  "Troubleshooting" (consolidated real issues hit during this project's
+  development — native-USB reset re-enumeration, split breadboard power
+  rails, IR aim/range sensitivity, `localhost`-from-the-ESP32,
+  secrets-file mixups) sections, plus a Stage 7 section with the final
+  ESP32-vs-simulator capability comparison and an explicit list of
+  intentionally-unsupported behavior (AC capabilities beyond power/temp,
+  IR reception in production, registration token persistence, and the
+  residual exactly-once-delivery edge case not eliminated by this
+  stage's dedup hardening).
+- Not built/uploaded/monitored by the assistant, per the plan's hardware
+  interaction rule — waiting on the user to build, upload, and confirm
+  no regressions across all prior stages, plus (if practical) exercising
+  a forced ack failure to confirm the dedup fix.
+
 ## Simulator parity checklist (living document — update in Stage 6)
 
 | Capability | Simulator | Firmware |
@@ -383,8 +434,8 @@ user before this stage was hardware-tested:
 | Command types | `set_state` {power?, target_temperature?: int} | Implemented via `IRElectraAc` semantic encoders, not just the 5 captured commands. **Confirmed on hardware** — a `{power: true, target_temperature: 24}` command correctly moved the real AC; 22/23°C remain the only individually pre-verified exact values, 24°C is now also confirmed working via the semantic encoder path. |
 | Command ack | `POST /device/commands/{id}/result` | Implemented; never acks `completed` before transmission succeeds. **Confirmed on hardware** — status flipped to `completed` with a matching `result` within one poll cycle. |
 | Command validation | None (simulator accepts any payload) | Firmware validates type/presence/temperature range before transmitting — a deliberate improvement beyond simulator parity, not required by the contract. **Confirmed on hardware** — an out-of-range command (`target_temperature: 99`) was rejected without transmitting and acked `failed`. |
-| Command dedup | N/A (simulator has no redelivery concern) | Implemented (transmit-and-ack-based, see Stage 6 notes for the known partial-ack-failure edge case deferred to Stage 7). Exercised during testing (no duplicate transmissions observed); the partial-ack-failure edge case itself was not specifically forced/tested. |
-| Retry/timeout | Fixed 5s timeout, no backoff (except reg. loop) | 5s HTTP timeout matches. Registration uses bounded backoff (Stage 5, confirmed). Heartbeat/telemetry/commands intentionally match the simulator's own no-backoff-on-failure behavior — Stage 7 is where the plan revisits this. |
+| Command dedup | N/A (simulator has no redelivery concern) | **Hardened Stage 7**: transmitted/acked now tracked separately, so a re-fetched command whose transmission succeeded but whose ack POST failed only retries the ack, never re-transmits to the AC. The Stage 6 partial-ack-failure edge case this closes was not independently hardware-forced/re-tested after the fix. |
+| Retry/timeout | Fixed 5s timeout, no backoff (except reg. loop) | 5s HTTP timeout matches. Registration and Wi-Fi reconnection use bounded exponential backoff with +/-20% jitter added in Stage 7 (previously backoff with no jitter). Heartbeat/telemetry/commands intentionally match the simulator's own fixed-interval, no-backoff-on-failure behavior — reviewed in Stage 7 and kept as-is (already bounded by the interval itself, not a tight loop). |
 | Heartbeat/online derivation | Server-side, 30s threshold | N/A (server behavior) |
 
 ## Open questions for the user

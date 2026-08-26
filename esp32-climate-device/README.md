@@ -15,7 +15,8 @@ NeoPixel test project) or with the backend/simulator.
 Implementation proceeds in gated stages. Stages 1-6 (DHT11 sensor, IR
 receiver, IR transmitter, combined local architecture, Wi-Fi + backend
 registration, telemetry and commands) are all confirmed working end-to-end
-on hardware. See:
+on hardware. Stage 7 (reliability hardening + final documentation) is
+implemented and awaiting hardware verification. See:
 
 - [`../docs/esp32-firmware-plan.md`](../docs/esp32-firmware-plan.md) — full
   staged implementation plan, safety rules, hardware pinout, and the
@@ -46,6 +47,109 @@ pio run                 # build
 pio run --target upload # upload
 pio device monitor      # serial monitor (115200 baud)
 ```
+
+## Architecture
+
+```
+lib/
+  ClimateSensor/       DHT11 read scheduling (Stage 1) — ClimateReadStatus{Ok,Failed}
+  AcTransmitter/       IR transmit on GPIO6 (Stage 3, extended Stage 6) — AcCommand enum
+                        (5 captured commands) + AcSendResult, plus sendState() for
+                        arbitrary backend-driven power/temperature via IRElectraAc's
+                        own encoders
+  DeviceState/         Firmware's local best-effort model of AC state (Stage 4) —
+                        AcDeviceState{power, targetTemperatureC}; no feedback channel,
+                        so this only reflects what was last commanded, not confirmed
+  SerialDiagnostics/   Manual serial test commands u/d/n/o/f (Stage 3)
+  DeviceIdentity/      getHardwareId() — stable ID from the ESP32's eFuse MAC (Stage 5)
+  WifiConnection/      Connect/reconnect with jittered bounded exponential backoff
+                        (Stage 5, jitter added Stage 7)
+  BackendClient/       HTTP client for the full device API contract (Stage 5-6) —
+                        register (backoff-until-success), heartbeat/telemetry/
+                        commands (fixed-interval, no backoff — matches simulator)
+  HeartbeatReporter/   POST /device/heartbeat every 10s (Stage 6)
+  TelemetryReporter/   POST /device/telemetry every 5s, real DHT11 data (Stage 6)
+  CommandProcessor/    GET /device/commands/next every 3s -> validate -> IR
+                        transmit -> POST result (Stage 6, dedup hardened Stage 7)
+src/main.cpp            Orchestration only — wires components together in
+                        setup()/loop(); no hardware or network logic of its own
+```
+
+**Execution flow.** `setup()` runs once: starts serial, initializes the DHT11
+and IR transmitter, derives the hardware ID, and kicks off the first Wi-Fi
+connection attempt. Nothing blocks waiting for Wi-Fi/registration to
+succeed — `loop()` starts immediately and runs cooperatively forever,
+calling three functions every iteration:
+
+1. `handleClimateSensor()` — asks `ClimateSensor` if 2s have elapsed since
+   the last DHT11 read; if so, reads and prints it (or logs a failure).
+2. `handleSerialCommand()` — checks for one buffered serial byte; if it's
+   a recognized command key, transmits it immediately.
+3. `handleNetworking()` — advances Wi-Fi's connection state machine, then
+   (only once connected) either drives registration-until-success, or (once
+   registered) drives heartbeat/telemetry/command-polling, each gated by
+   its own interval timer so none of them fire more often than intended.
+
+Every component that can block (Wi-Fi connect attempts, every HTTP call)
+is bounded to a few seconds at most — a 5s HTTP timeout, capped backoff
+between connection attempts — so DHT11 reads and serial AC commands never
+stall for more than that, even during a total network/backend outage.
+Nothing in this firmware uses `delay()` outside `setup()`'s one-time
+1-second pause for the monitor to attach.
+
+**Wi-Fi/backend recovery.** `WifiConnection` and `BackendClient`'s
+registration both use jittered exponential backoff (capped at 30s) rather
+than a tight retry loop. `backendClient.isRegistered()` never resets once
+true, so a transient Wi-Fi drop-and-reconnect resumes heartbeat/telemetry/
+commands immediately without re-registering — the device only needs to
+register once per boot (registration itself being idempotent means even a
+redundant one is harmless).
+
+**State and persistence.** No state is persisted across reboots
+(Preferences/NVS unused — see Stage 5 notes on why a registration token
+isn't needed). A reboot mid-operation is safe by construction: identity
+is re-derived deterministically from the eFuse MAC, registration is
+idempotent, and any command that was still `pending` at reboot is simply
+picked up fresh on the next poll — there's no local state that could be
+inconsistent or need recovery logic.
+
+## Troubleshooting
+
+Issues actually hit during development of this project, in case they
+recur:
+
+- **Serial monitor never shows the boot sequence.** By the time
+  `pio device monitor` attaches, the firmware has already booted and
+  connected — nothing is buffered for you to catch up on. Open the
+  monitor *first*, then reset the board (see next point), or use
+  `pio run --target upload --target monitor` to minimize the gap.
+- **The reset/`EN` button "does nothing."** On this board (native USB
+  CDC, no separate UART bridge chip), a hardware reset makes the USB
+  peripheral itself disconnect and re-enumerate — the same as during an
+  upload. `pio device monitor` doesn't always auto-recover from that; if
+  the port seems to hang, close and reopen the monitor.
+- **Two different serial ports show up in Device Manager.** If your
+  board has both a UART-bridge chip (e.g. CH343, shows as
+  `USB-Enhanced-SERIAL ...`) *and* the ESP32-S3's native USB (shows as a
+  generic `USB Serial Device`), use the **native USB** port — that's what
+  the `ARDUINO_USB_CDC_ON_BOOT=1` build flag routes `Serial` to.
+- **DHT11 reads fail 100% of the time.** Check the breadboard's power
+  rail isn't split into two disconnected halves (common breadboard
+  design) — verify with a multimeter or swap to direct jumpers from the
+  ESP32's 3.3V/GND pins as a test.
+- **IR commands reach the AC inconsistently.** Check transmitter aim and
+  range before suspecting firmware — IR emitters are directional and
+  lose reliability fast off-axis or at distance. Point it directly at the
+  AC's receiver window (usually near the display/status LED on the front
+  panel) from under a meter, then widen from there.
+- **Backend unreachable from the ESP32.** `localhost`/`127.0.0.1` in
+  `secrets.h` means the ESP32 itself, never your computer — use your
+  computer's LAN IP. Also double-check the port: `docker-compose.yml`
+  maps `API_HOST_PORT` (from the root `.env`) to the container's port,
+  and those aren't always the same value.
+- **Edited the wrong secrets file.** `include/secrets.example.h` is the
+  *committed template* — never put real credentials there. Real values go
+  in `include/secrets.h` (gitignored).
 
 ## Stage 1 — DHT11 sensor test
 
@@ -332,10 +436,8 @@ before the IR transmission has actually been issued.
 
 **Command dedup:** a fetched command's id is compared against the last
 one this firmware successfully transmitted *and* acknowledged; a repeat
-id is skipped rather than re-transmitted. Known edge case: if the AC
-transmission succeeds but the acknowledgment POST itself fails, the next
-poll will retry and could re-transmit — Stage 7 (reliability) is where
-the plan revisits command dedup further.
+id is skipped rather than re-transmitted. (Stage 7 hardened this further
+— see below.)
 
 Expected serial output once running normally:
 
@@ -372,3 +474,92 @@ simulator's own logging style, avoiding log spam every 5-10s.)
       working throughout.
 - [ ] Update the parity checklist in
       `../docs/esp32-firmware-status.md` with your test evidence.
+
+## Stage 7 — Reliability and final documentation
+
+The final stage: no new capabilities, just hardening what Stages 1-6
+built, plus this file's Architecture/Troubleshooting sections above and
+the final parity comparison below.
+
+**What changed:**
+
+- **Jittered backoff.** `WifiConnection` and `BackendClient`'s
+  registration backoff both gained +/-20% random jitter on top of the
+  existing exponential schedule (still capped at 30s) — avoids many
+  devices retrying in perfect lockstep after a shared outage (e.g. the
+  Wi-Fi router or backend restarting). Heartbeat/telemetry/command-poll
+  intentionally keep their fixed intervals with no backoff at all — that
+  already matches the simulator's own behavior and isn't a tight loop
+  (bounded by the interval itself), so there was nothing to hardstop-count
+  or fix there.
+- **Command dedup hardened.** `CommandProcessor` now tracks "transmitted"
+  and "acked" as two separate states instead of one. Previously, if the
+  IR transmission succeeded but the acknowledgment POST itself failed
+  (e.g. a network blip right after transmitting), the next poll would
+  re-fetch the same still-pending command and transmit it *again*. Now,
+  a re-fetched command that was already transmitted only retries the
+  acknowledgment — it is never sent to the AC twice.
+- **Verified, not changed** (already correct from earlier stages, audited
+  again here): request timeouts (5s on every HTTP call), DHT11
+  read-failure handling (Stage 1, unchanged), no Wi-Fi/secrets ever
+  logged (confirmed by inspection — `password_` is only ever passed to
+  `WiFi.begin()`), no unbounded queues or heap growth (all HTTP
+  request/response objects are function-local, released every call), safe
+  post-reboot behavior (see Architecture section above — nothing is
+  persisted, so there's no stale/inconsistent state to recover from).
+
+### Final ESP32-vs-simulator capability comparison
+
+See `../docs/esp32-firmware-status.md`'s parity checklist for the
+capability-by-capability table with hardware-test evidence for each row.
+Summarized:
+
+| | Simulator | ESP32 firmware |
+|---|---|---|
+| Sensing | Fabricated thermal model | Real DHT11 |
+| AC control | No real device | Real IR transmission to a real Electra AC |
+| Registration retry | Infinite tight loop @3s | Bounded jittered exponential backoff |
+| Command validation | None — accepts any payload | Type/presence/range validated before transmitting |
+| Command dedup | N/A (no redelivery risk in-process) | Transmit/ack tracked separately (Stage 7) |
+
+**Intentionally unsupported / out of scope** (not gaps to close later —
+deliberate decisions, each already discussed and confirmed with the
+user during implementation):
+
+- **AC capabilities beyond power/temperature** (fan speed selection,
+  swing, turbo, quiet, clean, mode) — the backend's `ClimateState`
+  contract only has `power`/`target_temperature`; nothing else to wire up
+  without a backend contract change first. Explicitly deferred to a
+  future step by the user's own request, to avoid complicating this
+  firmware and its test surface further.
+- **IR reception in production** — dropped after Stage 3. The backend has
+  no endpoint for a device to report AC state detected from a physical
+  remote, so a receiver would have nothing to feed.
+- **Registration token persistence (Preferences/NVS)** — not implemented
+  because the backend has no auth/token concept to persist.
+- **Guaranteed exactly-once command delivery** — dedup (hardened this
+  stage) eliminates the transmit-twice risk for the failure mode that was
+  identified (ack POST fails after a successful transmission). A more
+  exotic scenario — the backend receives and processes the ack, but its
+  response never reaches the device, *and* the device also reboots before
+  its next poll — would still show as unhandled after reboot and retry
+  once more; this residual risk is accepted as out of scope rather than
+  solved with persistent cross-reboot dedup state, which isn't justified
+  by this project's scope.
+
+### Verification checklist
+
+- [ ] `pio run` builds without errors.
+- [ ] Force a Wi-Fi outage (e.g. wrong password temporarily, or turn off
+      the router briefly) and confirm reconnection still works with
+      backoff — the retry intervals won't be identical every time now
+      (jitter), which is expected.
+- [ ] Regression-check everything from Stages 1-6 still works: DHT11
+      reads, serial `u`/`d`/`n`/`o`/`f` commands, registration, heartbeat,
+      telemetry, and a real command reaching the AC.
+- [ ] If practical: simulate an ack failure (e.g. briefly block/kill the
+      backend right after a command is sent but before the ack would
+      normally land) and confirm via serial logs that the retry does
+      **not** re-transmit to the AC, only retries the acknowledgment.
+- [ ] No crash/hang observed across at least one full reboot cycle with a
+      command left pending.

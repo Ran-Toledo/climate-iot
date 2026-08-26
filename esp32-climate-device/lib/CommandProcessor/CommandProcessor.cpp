@@ -15,6 +15,7 @@ CommandProcessor::CommandProcessor(BackendClient &backendClient, AcTransmitter &
       acTransmitter_(acTransmitter),
       acState_(acState),
       lastPollMs_(0),
+      lastTransmittedCommandId_(-1),
       lastHandledCommandId_(-1) {}
 
 void CommandProcessor::update(unsigned long nowMs, const String &hardwareId) {
@@ -30,7 +31,16 @@ void CommandProcessor::update(unsigned long nowMs, const String &hardwareId) {
   }
 
   if (command.id == lastHandledCommandId_) {
-    return; // already transmitted + acked; avoid a duplicate IR send
+    return; // already transmitted + acked -- fully done
+  }
+
+  if (command.id == lastTransmittedCommandId_) {
+    // Already sent to the AC last poll; only the ack failed to land.
+    // Retry the ack only -- never re-transmit a command twice.
+    if (backendClient_.submitCommandResult(command.id, CommandResultStatus::Completed, acState_)) {
+      lastHandledCommandId_ = command.id;
+    }
+    return;
   }
 
   if (!command.typeSupported) {
@@ -82,13 +92,12 @@ void CommandProcessor::update(unsigned long nowMs, const String &hardwareId) {
 
   acState_.power = power ? PowerState::On : PowerState::Off;
   acState_.targetTemperatureC = static_cast<int8_t>(targetTempC);
+  lastTransmittedCommandId_ = command.id; // mark sent before attempting the ack
 
   if (backendClient_.submitCommandResult(command.id, CommandResultStatus::Completed, acState_)) {
     lastHandledCommandId_ = command.id;
   }
   // If the ack POST itself failed (not a 200/409), lastHandledCommandId_
-  // is left unset so the next poll retries acking. Known Stage 6 edge
-  // case: if the AC transmission succeeded but only this ack failed, the
-  // retry could re-transmit -- see docs/esp32-firmware-status.md Stage 6
-  // notes; Stage 7 (reliability) is where the plan revisits command dedup.
+  // is left unset -- the next poll re-fetches this same id, matches
+  // lastTransmittedCommandId_ above, and retries only the ack.
 }
