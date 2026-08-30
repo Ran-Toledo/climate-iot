@@ -55,9 +55,12 @@ services:
         # A browser-reachable URL, not the Docker-network hostname the
         # device-simulator uses -- the frontend runs in the user's browser,
         # outside the compose network. Baked in at build time (see the
-        # Dockerfile), so changing API_HOST_PORT requires
+        # Dockerfile), so changing it requires
         # `docker compose up --build -d frontend`, not just a restart.
-        VITE_API_BASE_URL: http://localhost:${API_HOST_PORT:-8000}
+        # Set in .env -- defaults to localhost, which only works when
+        # browsing from this machine; use its LAN IP to reach it from
+        # another device (see .env.example's comment).
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL}
     environment:
       FRONTEND_PORT: ${FRONTEND_PORT:-4173}
     ports:

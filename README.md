@@ -92,8 +92,8 @@ the frontend's API URL (`VITE_API_BASE_URL`) is baked into its static
 bundle at **image build time**, not read at container start — a browser
 runs the SPA outside the Docker network, so it needs a `localhost`-style
 URL rather than the `http://api:8000` the device-simulator uses internally.
-If you change `API_HOST_PORT`, the frontend needs an explicit rebuild to
-pick it up:
+If you change `API_HOST_PORT` (or `VITE_API_BASE_URL` itself), the frontend
+needs an explicit rebuild to pick it up:
 
 ```
 docker compose up --build -d frontend
@@ -101,6 +101,31 @@ docker compose up --build -d frontend
 
 For local frontend development without rebuilding a container on every
 change, run it outside Docker instead — see `frontend/README.md`.
+
+**Testing from a phone, tablet, or another machine on your network**:
+`localhost` in `VITE_API_BASE_URL` and `CORS_ALLOWED_ORIGINS` means "the
+same machine the browser is on" — from another device it resolves to
+*that device itself*, not this one, which is why it looks like the API is
+unreachable rather than like a config problem. Use this machine's LAN IP
+instead of `localhost` in both:
+
+1. Find it (Windows: `ipconfig`; macOS/Linux: `ifconfig` or `ip addr`) —
+   look for the adapter your other device actually shares a network with
+   (e.g. Wi-Fi), not a VPN/virtual-machine/WSL adapter; a home LAN address
+   usually looks like `192.168.x.x`.
+2. In `.env`: `VITE_API_BASE_URL=http://<lan-ip>:${API_HOST_PORT}` and add
+   `http://<lan-ip>:${FRONTEND_HOST_PORT}` to `CORS_ALLOWED_ORIGINS`
+   (comma-separated — keep the `localhost` entries too, for browsing from
+   this machine).
+3. `docker compose up --build -d` (the frontend needs the rebuild from
+   step above; the API just needs the new `CORS_ALLOWED_ORIGINS` picked up,
+   which the same command handles).
+4. Open `http://<lan-ip>:5173` on the other device — not `localhost`.
+
+Same idea for `npm run dev` (see `frontend/README.md`): its `VITE_API_BASE_URL`
+lives in `frontend/.env`, and the dev server itself already binds every
+network interface (not just `localhost`), so step 4 works there too once
+1-2 are done for that `.env` file.
 
 ## Demo walkthrough
 
