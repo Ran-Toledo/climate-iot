@@ -21,6 +21,7 @@ services:
       APP_HOST: ${APP_HOST}
       APP_PORT: ${APP_PORT}
       DATABASE_URL: ${DATABASE_URL}
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS}
     ports:
       - "${API_HOST_PORT:-8000}:${APP_PORT:-8000}"
     depends_on:
@@ -29,6 +30,11 @@ services:
 
   device-simulator:
     build: ./device-simulator
+    # Not started by a plain `docker compose up` -- opt in with
+    # `docker compose --profile simulator up -d` (or `COMPOSE_PROFILES=simulator`
+    # in .env) when you actually want a simulated device registering itself.
+    profiles:
+      - simulator
     environment:
       API_BASE_URL: ${API_BASE_URL}
       DEVICE_HARDWARE_ID: ${DEVICE_HARDWARE_ID}
@@ -39,6 +45,23 @@ services:
       AMBIENT_TEMPERATURE: ${AMBIENT_TEMPERATURE}
       STARTING_TEMPERATURE: ${STARTING_TEMPERATURE}
       TEMPERATURE_STEP: ${TEMPERATURE_STEP}
+    depends_on:
+      - api
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        # A browser-reachable URL, not the Docker-network hostname the
+        # device-simulator uses -- the frontend runs in the user's browser,
+        # outside the compose network. Baked in at build time (see the
+        # Dockerfile), so changing API_HOST_PORT requires
+        # `docker compose up --build -d frontend`, not just a restart.
+        VITE_API_BASE_URL: http://localhost:${API_HOST_PORT:-8000}
+    environment:
+      FRONTEND_PORT: ${FRONTEND_PORT:-4173}
+    ports:
+      - "${FRONTEND_HOST_PORT:-5173}:${FRONTEND_PORT:-4173}"
     depends_on:
       - api
 

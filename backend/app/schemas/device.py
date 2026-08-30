@@ -3,6 +3,7 @@ from datetime import datetime
 from pydantic import BaseModel, ConfigDict
 
 from app.schemas.device_state import DeviceStateOut
+from app.schemas.telemetry import TelemetryOut
 
 
 class DeviceRegisterRequest(BaseModel):
@@ -31,7 +32,5 @@ class DeviceSummary(DeviceOut):
     # last_heartbeat_at at request time, so callers must set it explicitly
     # rather than via model_validate(device).
     online: bool
-
-
-class DeviceDetail(DeviceSummary):
-    device_state: DeviceStateOut | None
+    latest_telemetry: TelemetryOut | None = None
+    device_state: DeviceStateOut | None = None
