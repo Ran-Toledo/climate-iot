@@ -127,6 +127,40 @@ lives in `frontend/.env`, and the dev server itself already binds every
 network interface (not just `localhost`), so step 4 works there too once
 1-2 are done for that `.env` file.
 
+**On a [Tailscale](https://tailscale.com) network** (recommended over the
+LAN IP if you have it — works from anywhere your other device has
+Tailscale connected, not just the same Wi-Fi, and the address doesn't
+change when you switch networks): same three settings, just a Tailscale
+address instead of a LAN IP.
+
+1. Run `tailscale status` on this machine — it lists this device's
+   MagicDNS name (e.g. `your-pc.your-tailnet.ts.net`) and Tailscale IP
+   (`100.x.y.z`). Prefer the name — it's stable even if the IP ever
+   changes, which a LAN IP can too but for a different reason (DHCP).
+2. Same as LAN steps 2-3 above, but with the Tailscale address:
+   `VITE_API_BASE_URL=http://your-pc.your-tailnet.ts.net:${API_HOST_PORT}`,
+   same origin added to `CORS_ALLOWED_ORIGINS`, then
+   `docker compose up --build -d`. All three origin styles (`localhost`,
+   LAN, Tailscale) can coexist in `CORS_ALLOWED_ORIGINS` — comma-separated,
+   nothing needs to be removed. Unlike the LAN IP, a hostname also needs
+   Vite's own server to allow it (`server`/`preview.allowedHosts` in
+   `frontend/vite.config.ts` — it 403s any Host header it doesn't
+   recognize, as anti-DNS-rebinding protection; bare IPs are always
+   allowed, hostnames aren't). Already handled here (`.ts.net` is
+   allowlisted), so nothing to do for MagicDNS names — worth knowing only
+   if you ever front this with a different custom hostname.
+3. Open `http://your-pc.your-tailnet.ts.net:5173` on the other device
+   (with Tailscale connected there too). If the name doesn't resolve,
+   confirm MagicDNS is on for the tailnet and "Accept DNS" is on for that
+   device (Tailscale settings) — or use the Tailscale IP instead, which
+   needs neither; just add *that* as its own origin in
+   `CORS_ALLOWED_ORIGINS` too (`http://100.x.y.z:5173`) — it's a different
+   origin from the hostname as far as the browser and CORS are concerned,
+   even though it's the same machine, so it doesn't inherit the name's
+   entry. `VITE_API_BASE_URL` itself can stay on the hostname regardless of
+   which address you load the frontend *from* — it only controls where the
+   already-loaded page calls the API, which is independent of that.
+
 ## Demo walkthrough
 
 This reproduces the full desired/reported state lifecycle from a clean
