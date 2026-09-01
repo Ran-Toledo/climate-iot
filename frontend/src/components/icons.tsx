@@ -2,6 +2,19 @@ interface IconProps {
   className?: string;
 }
 
+// The app's mark -- matches public/favicon.svg. Kept in sync by hand; the
+// favicon can't reuse this component directly since it has to be a static
+// file, not React.
+export function AppIcon({ className }: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" className={className}>
+      <rect width="24" height="24" rx="6" fill="#2a78d6" />
+      <line x1="12" y1="5.5" x2="12" y2="13" stroke="#fcfcfb" strokeWidth="2.2" strokeLinecap="round" />
+      <circle cx="12" cy="16.5" r="2.8" fill="#fcfcfb" />
+    </svg>
+  );
+}
+
 export function ChevronRightIcon({ className }: IconProps) {
   return (
     <svg

@@ -2,7 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { listDevices } from "../api/devices";
 import type { Device } from "../api/types";
-import { ChevronRightIcon, PowerIcon } from "../components/icons";
+import { AppIcon, ChevronRightIcon, PowerIcon } from "../components/icons";
 import { ErrorBanner } from "../components/ErrorBanner";
 import { Skeleton } from "../components/Skeleton";
 import { formatRelativeTime } from "../lib/format";
@@ -16,7 +16,11 @@ export function DeviceListPage() {
 
   return (
     <div className="mx-auto max-w-md px-5 pt-8 pb-8">
-      <h1 className="text-2xl font-semibold tracking-tight">Devices</h1>
+      <div className="flex items-center gap-2">
+        <AppIcon className="h-7 w-7" />
+        <span className="text-sm font-semibold text-[#52514e]">Climate IoT</span>
+      </div>
+      <h1 className="mt-3 text-2xl font-semibold tracking-tight">Devices</h1>
 
       {isLoading && (
         <div className="mt-4 flex flex-col gap-3">
