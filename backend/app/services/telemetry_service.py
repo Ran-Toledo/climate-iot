@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Telemetry
@@ -34,21 +34,25 @@ async def list_telemetry(
     until = until or now
     limit = min(limit, MAX_LIMIT)
 
-    # Order desc + limit first so a truncated window keeps the most recent
-    # readings (what a graph needs), then reverse back to oldest-first for
-    # the response -- asc + limit would silently keep the *oldest* rows and
-    # cut off everything since, which is backwards for a time-series chart.
+    # Bucket the window into `limit` equal-width slices and keep the latest
+    # reading per bucket, so a wide window (e.g. 30D) is sampled evenly
+    # across its full span. Plain order-by-recent + limit would only ever
+    # return the newest `limit` rows -- at the device's ~5s telemetry
+    # cadence that's just the last few minutes, silently hiding everything
+    # older regardless of how far back `since` reaches.
+    window_seconds = max((until - since).total_seconds(), 1)
+    bucket_seconds = max(window_seconds / limit, 1)
+    bucket = func.floor(func.extract("epoch", Telemetry.recorded_at - since) / bucket_seconds)
+
     result = await db.execute(
         select(Telemetry)
         .where(Telemetry.device_id == device_id)
         .where(Telemetry.recorded_at >= since)
         .where(Telemetry.recorded_at <= until)
-        .order_by(Telemetry.recorded_at.desc())
-        .limit(limit)
+        .distinct(bucket)
+        .order_by(bucket, Telemetry.recorded_at.desc())
     )
-    readings = list(result.scalars().all())
-    readings.reverse()
-    return readings
+    return list(result.scalars().all())
 
 
 async def get_latest_telemetry(db: AsyncSession, device_id: int) -> Telemetry | None:
