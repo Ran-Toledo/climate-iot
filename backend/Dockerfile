@@ -10,5 +10,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY app ./app
 COPY alembic.ini .
 COPY alembic ./alembic
+COPY scripts ./scripts
 
-CMD uvicorn app.main:app --host $APP_HOST --port $APP_PORT
+# The SQLite database file lives in /data (a volume in docker-compose.yml).
+RUN mkdir -p /data
+
+# Apply migrations on every start (a no-op when already current), so a fresh
+# volume gets its schema without a manual step.
+CMD python -m alembic upgrade head && uvicorn app.main:app --host $APP_HOST --port $APP_PORT

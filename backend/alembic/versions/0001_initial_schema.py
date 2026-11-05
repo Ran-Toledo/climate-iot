@@ -1,13 +1,19 @@
-"""initial schema
+"""initial schema (SQLite)
+
+Replaces the original Postgres history (0001 initial schema, 0002 drop
+telemetry.co2) with a single schema written against generic types, for the
+move from Postgres to SQLite. Existing Postgres data is copied over with
+scripts/pg_to_sqlite.py rather than migrated in place.
 
 Revision ID: 0001
 Revises:
-Create Date: 2026-07-13
+Create Date: 2026-11-05
 
 """
 from alembic import op
 import sqlalchemy as sa
-from sqlalchemy.dialects import postgresql
+
+from app.db.types import UTCDateTime
 
 revision = "0001"
 down_revision = None
@@ -22,8 +28,8 @@ def upgrade() -> None:
         sa.Column("hardware_id", sa.String(length=100), nullable=False),
         sa.Column("device_type", sa.String(length=50), nullable=False, server_default="climate_controller"),
         sa.Column("name", sa.String(length=100), nullable=True),
-        sa.Column("last_heartbeat_at", sa.DateTime(timezone=True), nullable=True),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.Column("last_heartbeat_at", UTCDateTime(), nullable=True),
+        sa.Column("created_at", UTCDateTime(), nullable=False),
     )
     op.create_index("ix_devices_hardware_id", "devices", ["hardware_id"], unique=True)
 
@@ -31,9 +37,9 @@ def upgrade() -> None:
         "device_states",
         sa.Column("id", sa.Integer(), primary_key=True),
         sa.Column("device_id", sa.Integer(), sa.ForeignKey("devices.id", ondelete="CASCADE"), nullable=False),
-        sa.Column("desired_state", postgresql.JSONB(), nullable=False, server_default="{}"),
-        sa.Column("reported_state", postgresql.JSONB(), nullable=False, server_default="{}"),
-        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.Column("desired_state", sa.JSON(), nullable=False, server_default="{}"),
+        sa.Column("reported_state", sa.JSON(), nullable=False, server_default="{}"),
+        sa.Column("updated_at", UTCDateTime(), nullable=False),
     )
     op.create_index("ix_device_states_device_id", "device_states", ["device_id"], unique=True)
 
@@ -43,27 +49,29 @@ def upgrade() -> None:
         sa.Column("device_id", sa.Integer(), sa.ForeignKey("devices.id", ondelete="CASCADE"), nullable=False),
         sa.Column("temperature", sa.Float(), nullable=False),
         sa.Column("humidity", sa.Float(), nullable=False),
-        sa.Column("co2", sa.Float(), nullable=False),
-        sa.Column("recorded_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.Column("recorded_at", UTCDateTime(), nullable=False),
     )
     op.create_index("ix_telemetry_device_id", "telemetry", ["device_id"])
     op.create_index("ix_telemetry_recorded_at", "telemetry", ["recorded_at"])
-
-    command_status = postgresql.ENUM(
-        "pending", "completed", "failed", name="command_status", create_type=False
-    )
-    command_status.create(op.get_bind(), checkfirst=True)
 
     op.create_table(
         "commands",
         sa.Column("id", sa.Integer(), primary_key=True),
         sa.Column("device_id", sa.Integer(), sa.ForeignKey("devices.id", ondelete="CASCADE"), nullable=False),
         sa.Column("type", sa.String(length=50), nullable=False, server_default="set_state"),
-        sa.Column("payload", postgresql.JSONB(), nullable=False),
-        sa.Column("status", command_status, nullable=False, server_default="pending"),
-        sa.Column("result", postgresql.JSONB(), nullable=True),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
-        sa.Column("completed_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("payload", sa.JSON(), nullable=False),
+        sa.Column(
+            "status",
+            sa.Enum(
+                "pending", "completed", "failed",
+                name="command_status", native_enum=False, create_constraint=True,
+            ),
+            nullable=False,
+            server_default="pending",
+        ),
+        sa.Column("result", sa.JSON(), nullable=True),
+        sa.Column("created_at", UTCDateTime(), nullable=False),
+        sa.Column("completed_at", UTCDateTime(), nullable=True),
     )
     op.create_index("ix_commands_device_id", "commands", ["device_id"])
     op.create_index("ix_commands_status", "commands", ["status"])
@@ -73,7 +81,6 @@ def downgrade() -> None:
     op.drop_index("ix_commands_status", table_name="commands")
     op.drop_index("ix_commands_device_id", table_name="commands")
     op.drop_table("commands")
-    postgresql.ENUM(name="command_status").drop(op.get_bind(), checkfirst=True)
 
     op.drop_index("ix_telemetry_recorded_at", table_name="telemetry")
     op.drop_index("ix_telemetry_device_id", table_name="telemetry")

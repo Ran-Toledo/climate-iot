@@ -1,22 +1,4 @@
 services:
-  db:
-    image: postgres:16-alpine
-    environment:
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      POSTGRES_DB: ${POSTGRES_DB}
-    # No published port: only the api can reach Postgres, over the internal
-    # `data` network. For psql, use `docker compose exec db psql -U <user> <db>`.
-    networks:
-      - data
-    volumes:
-      - db_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-
   api:
     build: ./backend
     environment:
@@ -25,16 +7,12 @@ services:
       DATABASE_URL: ${DATABASE_URL}
       CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS}
     # Published on every interface, so the ESP32 can reach it over Wi-Fi and
-    # other devices over the LAN or Tailscale. The frontend proxies to it
-    # over the `app` network.
+    # other devices over the LAN or Tailscale.
     ports:
       - "${API_HOST_PORT:-8000}:${APP_PORT:-8000}"
-    networks:
-      - app
-      - data
-    depends_on:
-      db:
-        condition: service_healthy
+    # The SQLite database file lives here (DATABASE_URL points into /data).
+    volumes:
+      - api_data:/data
 
   device-simulator:
     build: ./device-simulator
@@ -53,8 +31,6 @@ services:
       AMBIENT_TEMPERATURE: ${AMBIENT_TEMPERATURE}
       STARTING_TEMPERATURE: ${STARTING_TEMPERATURE}
       TEMPERATURE_STEP: ${TEMPERATURE_STEP}
-    networks:
-      - app
     depends_on:
       - api
 
@@ -70,18 +46,8 @@ services:
     # address, which proxies to this localhost port (see README).
     ports:
       - "127.0.0.1:${FRONTEND_HOST_PORT:-5173}:${FRONTEND_PORT:-4173}"
-    networks:
-      - app
     depends_on:
       - api
 
-networks:
-  # The api, frontend and simulator. Not internal, so they can publish ports.
-  app:
-  # The api and Postgres only. `internal` means no route in or out of
-  # Docker, and the frontend isn't attached to it at all.
-  data:
-    internal: true
-
 volumes:
-  db_data:
+  api_data:

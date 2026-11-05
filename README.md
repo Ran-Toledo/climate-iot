@@ -1,7 +1,7 @@
 # Climate IoT — Backend MVP
 
 A minimal backend for a smart-home climate controller: a FastAPI service, a
-Postgres database, and a Python device simulator that stands in for a future
+SQLite database, and a Python device simulator that stands in for a future
 ESP32 controller. The simulator talks to the backend over plain HTTP — the
 same contract the real device will use later, so swapping the simulator for
 firmware requires no API changes.
@@ -10,12 +10,13 @@ firmware requires no API changes.
 
 ```
 Browser --HTTPS (tailscale serve)--> frontend proxy --+
-ESP32 / LAN / Tailscale --HTTP :8080 -----------------+--> FastAPI Backend --> PostgreSQL
+ESP32 / LAN / Tailscale --HTTP :8080 -----------------+--> FastAPI Backend --> SQLite file
 Device Simulator (inside Docker) ---------------------+
 ```
 
-The database publishes no host port. See "Network access" below for who
-can reach what.
+The database is a SQLite file inside the `api` container's `/data` volume,
+so nothing else can reach it. See "Network access" below for who can reach
+what.
 
 The core idea is that a device has two independent states:
 
@@ -42,8 +43,8 @@ docker compose up --build -d
 docker compose ps
 ```
 
-Three services (`db`, `api`, `frontend`) should show as running (`db` as
-`healthy`). Two of them publish a host port: the frontend on
+Two services (`api`, `frontend`) should show as running. The frontend is
+published on
 `127.0.0.1:${FRONTEND_HOST_PORT}` (default `5173`) and the API on
 `${API_HOST_PORT}` (default `8000`) on every interface.
 If a port is already taken on your machine, change it in `.env` and re-run
@@ -56,21 +57,13 @@ would run) — start it with:
 docker compose --profile simulator up --build -d
 ```
 
-which brings up `device-simulator` alongside the other three. Leave the
+which brings up `device-simulator` alongside the other two. Leave the
 `--profile simulator` flag off and it stays stopped; to make it always start
 without typing the flag, add `COMPOSE_PROFILES=simulator` to `.env` instead.
 
-**Apply the database schema** (only needed once, or after a
-`docker compose down -v`):
-
-```
-docker compose exec api python -m alembic upgrade head
-```
-
-Until this runs, the API is up but any endpoint touching the database
-returns a 500 — if the `device-simulator` is running, it'll just log
-registration failures and keep retrying every 3s, which is expected, not a
-bug.
+The database schema is applied automatically: the `api` container runs
+`alembic upgrade head` on every start (a no-op when already current), so a
+fresh volume needs no manual step.
 
 Check the API is up (through the frontend's proxy, the only way in from
 this machine):
@@ -121,10 +114,9 @@ In particular:
   over Wi-Fi. Point its `BACKEND_BASE_URL`
   (`esp32-climate-device/include/secrets.h`) at
   `http://<this machine's LAN IP>:<API_HOST_PORT>`.
-- **Postgres has no host port**, and it sits on an internal Docker network
-  (`data`) shared only with the `api`, so the frontend can't reach it
-  either. For a SQL shell, use
-  `docker compose exec db psql -U climate_app climate_iot`.
+- **The database is a SQLite file** in the `api` container's `/data`
+  volume, with no port at all. For a SQL shell, use
+  `docker compose exec api python -m sqlite3 /data/climate_iot.db`.
 
 **HTTPS over [Tailscale](https://tailscale.com).** `tailscale serve` runs on
 the host, outside Docker, and forwards a tailnet-only HTTPS port to the
@@ -243,7 +235,7 @@ source. Key ones:
 
 | Variable | Purpose |
 |---|---|
-| `DATABASE_URL` | asyncpg connection string used by the API and Alembic |
+| `DATABASE_URL` | SQLAlchemy URL used by the API and Alembic (`sqlite+aiosqlite:////data/climate_iot.db`) |
 | `CORS_ALLOWED_ORIGINS` | Comma-separated browser origins allowed to call the API cross-origin. Normally empty, since browsers reach the API through the frontend's proxy on the same origin |
 | `FRONTEND_HOST_PORT` | Port the frontend is published on, on `127.0.0.1` only (container always listens on `FRONTEND_PORT`) |
 | `API_HOST_PORT` | Host port the API is published on, on every interface (container always listens on `APP_PORT`) |
@@ -255,7 +247,7 @@ source. Key ones:
 
 ```
 docker compose down        # stop containers, keep data
-docker compose down -v     # stop containers and wipe the Postgres volume
+docker compose down -v     # stop containers and wipe the database volume
 ```
 
 ## Out of scope (by design)
@@ -271,7 +263,8 @@ raw readings; a consumer computes aggregates itself.
 - No `Users` table — devices have no owner; a single implicit tenant is
   assumed.
 - `Command.payload` and `DeviceState.desired_state`/`reported_state` are
-  JSONB, validated at the Pydantic layer rather than by DB columns/constraints.
+  JSON (text in SQLite), validated at the Pydantic layer rather than by DB
+  columns/constraints.
 - `GET /commands/next` does not mark a command as "in flight" — if the
   simulator polls twice before acknowledging, the same command could be
   refetched (a 409 guard prevents a *second acknowledgment* from corrupting

@@ -1,10 +1,10 @@
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, func
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy import ForeignKey, JSON
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
+from app.db.types import UTCDateTime, utcnow
 
 
 class DeviceState(Base):
@@ -14,8 +14,8 @@ class DeviceState(Base):
     device_id: Mapped[int] = mapped_column(
         ForeignKey("devices.id", ondelete="CASCADE"), unique=True, index=True
     )
-    desired_state: Mapped[dict] = mapped_column(JSONB, default=dict, server_default="{}")
-    reported_state: Mapped[dict] = mapped_column(JSONB, default=dict, server_default="{}")
+    desired_state: Mapped[dict] = mapped_column(JSON, default=dict, server_default="{}")
+    reported_state: Mapped[dict] = mapped_column(JSON, default=dict, server_default="{}")
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+        UTCDateTime(), default=utcnow, onupdate=utcnow
     )

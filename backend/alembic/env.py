@@ -7,6 +7,7 @@ from sqlalchemy import pool
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from app.db.base import Base
+from app.db.sqlite import configure_sqlite
 from app.models import Command, Device, DeviceState, Telemetry  # noqa: F401
 
 config = context.config
@@ -25,13 +26,16 @@ def run_migrations_offline() -> None:
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
+        # SQLite can't ALTER most things in place; batch mode recreates the
+        # table instead, so future migrations work there.
+        render_as_batch=True,
     )
     with context.begin_transaction():
         context.run_migrations()
 
 
 def do_run_migrations(connection) -> None:
-    context.configure(connection=connection, target_metadata=target_metadata)
+    context.configure(connection=connection, target_metadata=target_metadata, render_as_batch=True)
     with context.begin_transaction():
         context.run_migrations()
 
@@ -42,6 +46,7 @@ async def run_migrations_online() -> None:
         prefix="sqlalchemy.",
         poolclass=pool.NullPool,
     )
+    configure_sqlite(connectable.sync_engine)
 
     async with connectable.connect() as connection:
         await connection.run_sync(do_run_migrations)

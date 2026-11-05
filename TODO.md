@@ -24,16 +24,8 @@ Deferred work noticed along the way, not currently blocking anything.
 - **Backend: no pagination on `GET /management/devices`**
   (`backend/app/api/management.py`). Fine at current scale (one real
   device), but worth revisiting if the device list grows.
-- **Infra: switch the database from PostgreSQL to SQLite.** The backend
-  currently depends on Postgres-specific pieces that would need to change:
-  `JSONB` columns (`backend/app/models/command.py`,
-  `backend/app/models/device_state.py`), the native `ENUM` type and
-  `JSONB` in the initial Alembic migration
-  (`backend/alembic/versions/0001_initial_schema.py`), and the `asyncpg`
-  driver (`backend/requirements.txt` → `aiosqlite`). The `db` service in
-  `docker-compose.yml` would go away in favour of a volume-mounted SQLite
-  file for the `api` service, and `DATABASE_URL` / `POSTGRES_*` in
-  `.env.example` would need updating.
+- ~~Infra: switch the database from PostgreSQL to SQLite~~ — done (see
+  `docs/sqlite-migration-plan.md`).
 - ~~Infra: Tailscale support for the frontend and API~~ — done. The
   frontend is served over tailnet HTTPS by `tailscale serve` on the host
   (port 9443), and the frontend proxies the API on its own origin (see the
