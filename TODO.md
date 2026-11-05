@@ -24,3 +24,21 @@ Deferred work noticed along the way, not currently blocking anything.
 - **Backend: no pagination on `GET /management/devices`**
   (`backend/app/api/management.py`). Fine at current scale (one real
   device), but worth revisiting if the device list grows.
+- **Infra: switch the database from PostgreSQL to SQLite.** The backend
+  currently depends on Postgres-specific pieces that would need to change:
+  `JSONB` columns (`backend/app/models/command.py`,
+  `backend/app/models/device_state.py`), the native `ENUM` type and
+  `JSONB` in the initial Alembic migration
+  (`backend/alembic/versions/0001_initial_schema.py`), and the `asyncpg`
+  driver (`backend/requirements.txt` → `aiosqlite`). The `db` service in
+  `docker-compose.yml` would go away in favour of a volume-mounted SQLite
+  file for the `api` service, and `DATABASE_URL` / `POSTGRES_*` in
+  `.env.example` would need updating.
+- **Infra: built-in Tailscale support for the frontend and API.** Today
+  Tailscale works only by hand: the README walks through finding the
+  host's MagicDNS name, then setting `VITE_API_BASE_URL` and
+  `CORS_ALLOWED_ORIGINS` to match. Proper support would give the app its
+  own tailnet identity, for example a `tailscale` sidecar container in
+  `docker-compose.yml` with `tailscale serve` in front of the frontend and
+  API. The setup would then stop depending on the host's name and ports,
+  and could serve over HTTPS.
