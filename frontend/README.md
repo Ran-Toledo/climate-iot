@@ -7,19 +7,24 @@ React + TypeScript SPA against the backend's Management API. See
 ## Setup
 
 ```
-cp .env.example .env   # point VITE_API_BASE_URL at your running backend
 npm install
 npm run dev
 ```
 
-Requires the backend (`../backend`) running and reachable at the URL in
-`.env` — see the root `README.md`'s Quick start.
+The dev server proxies `/api` (plus `/health`, `/docs`, `/redoc`,
+`/openapi.json`) to a backend at `http://localhost:8000`. To use the
+Docker stack's API instead, point `API_PROXY_TARGET` at its host port:
+
+```
+API_PROXY_TARGET=http://localhost:8080 npm run dev
+```
+
+The dev server listens on localhost only.
 
 This is the path for active frontend development (instant reload on save).
 For just running the whole stack, `docker compose up --build -d` from the
 repo root already brings this up as the `frontend` service — see the root
-`README.md`'s "Frontend" section, including the note that its API URL is
-baked in at image build time, unlike everything else in this project.
+`README.md`'s "Frontend" and "Network access" sections.
 
 ## Stack
 

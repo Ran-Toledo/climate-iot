@@ -9,8 +9,13 @@ firmware requires no API changes.
 ## Architecture
 
 ```
-Device Simulator --HTTP--> FastAPI Backend --> PostgreSQL
+Browser --HTTPS (tailscale serve)--> frontend proxy --+
+ESP32 / LAN / Tailscale --HTTP :8080 -----------------+--> FastAPI Backend --> PostgreSQL
+Device Simulator (inside Docker) ---------------------+
 ```
+
+The database publishes no host port. See "Network access" below for who
+can reach what.
 
 The core idea is that a device has two independent states:
 
@@ -38,10 +43,10 @@ docker compose ps
 ```
 
 Three services (`db`, `api`, `frontend`) should show as running (`db` as
-`healthy`). The API's host port is controlled by `API_HOST_PORT` in `.env`
-(default `8000`), and Postgres's host port by `POSTGRES_PORT` (default
-`5432`) — if either port is already taken on your machine (e.g. by another
-local Postgres install), change it in `.env` and re-run
+`healthy`). Two of them publish a host port: the frontend on
+`127.0.0.1:${FRONTEND_HOST_PORT}` (default `5173`) and the API on
+`${API_HOST_PORT}` (default `8000`) on every interface.
+If a port is already taken on your machine, change it in `.env` and re-run
 `docker compose up -d`; no source changes needed.
 
 The Python device simulator is opt-in (it's not something a real deployment
@@ -67,18 +72,20 @@ returns a 500 — if the `device-simulator` is running, it'll just log
 registration failures and keep retrying every 3s, which is expected, not a
 bug.
 
-Check the API is up:
+Check the API is up (through the frontend's proxy, the only way in from
+this machine):
 
 ```
-curl http://localhost:8080/health
+curl http://localhost:5173/health
 ```
 
 ## Explore the API
 
-FastAPI generates interactive docs automatically:
+FastAPI generates interactive docs automatically. The frontend proxies
+them along with the API:
 
-- Swagger UI (try requests from the browser): http://localhost:8080/docs
-- ReDoc (read-only reference): http://localhost:8080/redoc
+- Swagger UI (try requests from the browser): http://localhost:5173/docs
+- ReDoc (read-only reference): http://localhost:5173/redoc
 
 ## Frontend
 
@@ -87,79 +94,52 @@ and controls, a temperature/humidity graph) lives in `frontend/` and is
 already part of `docker compose up` above as the `frontend` service —
 open http://localhost:5173 (or your `FRONTEND_HOST_PORT`) once it's up.
 
-The one gotcha worth knowing: unlike every other setting in this project,
-the frontend's API URL (`VITE_API_BASE_URL`) is baked into its static
-bundle at **image build time**, not read at container start — a browser
-runs the SPA outside the Docker network, so it needs a `localhost`-style
-URL rather than the `http://api:8000` the device-simulator uses internally.
-If you change `API_HOST_PORT` (or `VITE_API_BASE_URL` itself), the frontend
-needs an explicit rebuild to pick it up:
-
-```
-docker compose up --build -d frontend
-```
+The SPA calls the API with relative URLs (`/api/...`), and the frontend's
+server proxies those requests to the `api` container (`/health`, `/docs`,
+`/redoc` and `/openapi.json` too; see `frontend/vite.config.ts`). There's
+no API URL to configure and no CORS involved, so one image works from any
+address.
 
 For local frontend development without rebuilding a container on every
 change, run it outside Docker instead — see `frontend/README.md`.
 
-**Testing from a phone, tablet, or another machine on your network**:
-`localhost` in `VITE_API_BASE_URL` and `CORS_ALLOWED_ORIGINS` means "the
-same machine the browser is on" — from another device it resolves to
-*that device itself*, not this one, which is why it looks like the API is
-unreachable rather than like a config problem. Use this machine's LAN IP
-instead of `localhost` in both:
+## Network access
 
-1. Find it (Windows: `ipconfig`; macOS/Linux: `ifconfig` or `ip addr`) —
-   look for the adapter your other device actually shares a network with
-   (e.g. Wi-Fi), not a VPN/virtual-machine/WSL adapter; a home LAN address
-   usually looks like `192.168.x.x`.
-2. In `.env`: `VITE_API_BASE_URL=http://<lan-ip>:${API_HOST_PORT}` and add
-   `http://<lan-ip>:${FRONTEND_HOST_PORT}` to `CORS_ALLOWED_ORIGINS`
-   (comma-separated — keep the `localhost` entries too, for browsing from
-   this machine).
-3. `docker compose up --build -d` (the frontend needs the rebuild from
-   step above; the API just needs the new `CORS_ALLOWED_ORIGINS` picked up,
-   which the same command handles).
-4. Open `http://<lan-ip>:5173` on the other device — not `localhost`.
+| Who | Address | Reaches |
+|---|---|---|
+| This machine | `http://localhost:5173`, `http://localhost:${API_HOST_PORT}` | Frontend (with the API behind its proxy), and the API directly |
+| Other tailnet devices | `https://<this-pc>.<tailnet>.ts.net:9443` | The same, over HTTPS via `tailscale serve` |
+| ESP32 and other devices on the same Wi-Fi | `http://<lan-ip>:${API_HOST_PORT}` | The API |
+| Tailnet devices, API directly | `http://<this-pc>.<tailnet>.ts.net:${API_HOST_PORT}` | The API |
+| Device simulator | `http://api:8000` | The API directly, inside the Docker network |
 
-Same idea for `npm run dev` (see `frontend/README.md`): its `VITE_API_BASE_URL`
-lives in `frontend/.env`, and the dev server itself already binds every
-network interface (not just `localhost`), so step 4 works there too once
-1-2 are done for that `.env` file.
+In particular:
 
-**On a [Tailscale](https://tailscale.com) network** (recommended over the
-LAN IP if you have it — works from anywhere your other device has
-Tailscale connected, not just the same Wi-Fi, and the address doesn't
-change when you switch networks): same three settings, just a Tailscale
-address instead of a LAN IP.
+- **The frontend is published on `127.0.0.1` only**, so it isn't reachable
+  over Wi-Fi/LAN or on the plain-HTTP tailnet IP. Use the HTTPS address.
+- **The API is published on every interface**, so the ESP32 can reach it
+  over Wi-Fi. Point its `BACKEND_BASE_URL`
+  (`esp32-climate-device/include/secrets.h`) at
+  `http://<this machine's LAN IP>:<API_HOST_PORT>`.
+- **Postgres has no host port**, and it sits on an internal Docker network
+  (`data`) shared only with the `api`, so the frontend can't reach it
+  either. For a SQL shell, use
+  `docker compose exec db psql -U climate_app climate_iot`.
 
-1. Run `tailscale status` on this machine — it lists this device's
-   MagicDNS name (e.g. `your-pc.your-tailnet.ts.net`) and Tailscale IP
-   (`100.x.y.z`). Prefer the name — it's stable even if the IP ever
-   changes, which a LAN IP can too but for a different reason (DHCP).
-2. Same as LAN steps 2-3 above, but with the Tailscale address:
-   `VITE_API_BASE_URL=http://your-pc.your-tailnet.ts.net:${API_HOST_PORT}`,
-   same origin added to `CORS_ALLOWED_ORIGINS`, then
-   `docker compose up --build -d`. All three origin styles (`localhost`,
-   LAN, Tailscale) can coexist in `CORS_ALLOWED_ORIGINS` — comma-separated,
-   nothing needs to be removed. Unlike the LAN IP, a hostname also needs
-   Vite's own server to allow it (`server`/`preview.allowedHosts` in
-   `frontend/vite.config.ts` — it 403s any Host header it doesn't
-   recognize, as anti-DNS-rebinding protection; bare IPs are always
-   allowed, hostnames aren't). Already handled here (`.ts.net` is
-   allowlisted), so nothing to do for MagicDNS names — worth knowing only
-   if you ever front this with a different custom hostname.
-3. Open `http://your-pc.your-tailnet.ts.net:5173` on the other device
-   (with Tailscale connected there too). If the name doesn't resolve,
-   confirm MagicDNS is on for the tailnet and "Accept DNS" is on for that
-   device (Tailscale settings) — or use the Tailscale IP instead, which
-   needs neither; just add *that* as its own origin in
-   `CORS_ALLOWED_ORIGINS` too (`http://100.x.y.z:5173`) — it's a different
-   origin from the hostname as far as the browser and CORS are concerned,
-   even though it's the same machine, so it doesn't inherit the name's
-   entry. `VITE_API_BASE_URL` itself can stay on the hostname regardless of
-   which address you load the frontend *from* — it only controls where the
-   already-loaded page calls the API, which is independent of that.
+**HTTPS over [Tailscale](https://tailscale.com).** `tailscale serve` runs on
+the host, outside Docker, and forwards a tailnet-only HTTPS port to the
+frontend's localhost port. Set it up once (it survives reboots):
+
+```
+tailscale serve --bg --https=9443 http://127.0.0.1:5173
+```
+
+Use your `FRONTEND_HOST_PORT` in place of `5173`, and any HTTPS port not
+already in use (`tailscale serve status` lists them). Then open
+`https://<this-pc>.<tailnet>.ts.net:9443` on a device with Tailscale
+connected. Tailscale issues the certificate itself, but the tailnet needs
+MagicDNS and HTTPS certificates turned on in the admin console. To remove
+it: `tailscale serve --https=9443 off`.
 
 ## Demo walkthrough
 
@@ -177,14 +157,14 @@ a few seconds.
 **1. Confirm the simulated device registered itself**
 
 ```
-curl -s http://localhost:8080/api/v1/management/devices | python -m json.tool
+curl -s http://localhost:5173/api/v1/management/devices | python -m json.tool
 ```
 
 You should see one device, `sim-bedroom-001`, `online: true`. The list view
 doesn't include state — check the detail view for that:
 
 ```
-curl -s http://localhost:8080/api/v1/management/devices/1 | python -m json.tool
+curl -s http://localhost:5173/api/v1/management/devices/1 | python -m json.tool
 ```
 
 `device_state` starts with empty `desired_state`/`reported_state` — the
@@ -194,7 +174,7 @@ simulator internally has its own default settings.
 **2. Push a command via the management API**
 
 ```
-curl -s -X POST http://localhost:8080/api/v1/management/devices/1/commands \
+curl -s -X POST http://localhost:5173/api/v1/management/devices/1/commands \
   -H "Content-Type: application/json" \
   -d '{"payload":{"power":true,"target_temperature":22}}' | python -m json.tool
 ```
@@ -205,7 +185,7 @@ the response (e.g. `"id": 1`).
 **3. Verify the command was executed**
 
 ```
-curl -s http://localhost:8080/api/v1/management/commands/1 | python -m json.tool
+curl -s http://localhost:5173/api/v1/management/commands/1 | python -m json.tool
 ```
 
 Within one simulator poll cycle (a few seconds, `COMMAND_POLL_INTERVAL_SECONDS`
@@ -215,7 +195,7 @@ state.
 **4. Confirm desired and reported state now agree**
 
 ```
-curl -s http://localhost:8080/api/v1/management/devices/1 | python -m json.tool
+curl -s http://localhost:5173/api/v1/management/devices/1 | python -m json.tool
 ```
 
 `desired_state` and `reported_state` should both show
@@ -263,11 +243,10 @@ source. Key ones:
 
 | Variable | Purpose |
 |---|---|
-| `API_HOST_PORT` | Host port the API is exposed on (container always listens on `APP_PORT`) |
-| `POSTGRES_PORT` | Host port Postgres is exposed on, for tools like pgAdmin/psql (container always listens on 5432 internally) |
 | `DATABASE_URL` | asyncpg connection string used by the API and Alembic |
-| `CORS_ALLOWED_ORIGINS` | Comma-separated browser origins allowed to call the API (e.g. the frontend's dev server); empty disables CORS entirely |
-| `FRONTEND_HOST_PORT` | Host port the frontend is exposed on (container always listens on `FRONTEND_PORT`). Baked into the frontend's build alongside `API_HOST_PORT` — see "Frontend" above |
+| `CORS_ALLOWED_ORIGINS` | Comma-separated browser origins allowed to call the API cross-origin. Normally empty, since browsers reach the API through the frontend's proxy on the same origin |
+| `FRONTEND_HOST_PORT` | Port the frontend is published on, on `127.0.0.1` only (container always listens on `FRONTEND_PORT`) |
+| `API_HOST_PORT` | Host port the API is published on, on every interface (container always listens on `APP_PORT`) |
 | `DEVICE_HARDWARE_ID` / `DEVICE_NAME` | Identity the simulator registers as |
 | `HEARTBEAT_INTERVAL_SECONDS` / `TELEMETRY_INTERVAL_SECONDS` / `COMMAND_POLL_INTERVAL_SECONDS` | Simulator loop cadence |
 | `AMBIENT_TEMPERATURE` / `STARTING_TEMPERATURE` / `TEMPERATURE_STEP` | Simulator's thermal model |

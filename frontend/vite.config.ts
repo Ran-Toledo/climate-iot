@@ -1,21 +1,34 @@
 import tailwindcss from '@tailwindcss/vite'
 import react from '@vitejs/plugin-react'
-import { defineConfig } from 'vite'
+import { defineConfig, type ProxyOptions } from 'vite'
+
+// The SPA calls the API on its own origin (relative `/api/...` URLs), and
+// this server forwards those requests to the backend.
+// In Docker, API_PROXY_TARGET is the compose-network address
+// (http://api:8000); for `npm run dev` it defaults to a backend you run
+// yourself on localhost:8000.
+const apiTarget = process.env.API_PROXY_TARGET ?? 'http://localhost:8000'
+const proxiedPaths = ['/api', '/health', '/docs', '/redoc', '/openapi.json']
+const proxy: Record<string, ProxyOptions> = Object.fromEntries(
+  proxiedPaths.map((path) => [path, { target: apiTarget, changeOrigin: true }]),
+)
 
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [react(), tailwindcss()],
-  // Bind all interfaces, not just localhost, so the dev/preview server is
-  // reachable from another device (phone, tablet) on the same network --
-  // Vite prints both the localhost and LAN URLs to use.
+  // No `host: true` -- the dev server listens on localhost only. The Docker
+  // image's CMD passes `--host 0.0.0.0` because a container has to listen
+  // on all of its own interfaces; docker-compose.yml then publishes that
+  // port on the host's 127.0.0.1 only. Remote devices reach the frontend
+  // through `tailscale serve` (HTTPS), never over the LAN or a plain-HTTP
+  // tailnet IP -- see the root README's "Remote access" section.
   //
   // allowedHosts: Vite rejects (403) any request whose Host header isn't
   // localhost, a bare IP, or explicitly allowed here, as anti DNS-rebinding
-  // protection -- a LAN/Tailscale IP is auto-allowed, but a hostname like a
-  // Tailscale MagicDNS name (*.ts.net) isn't, so it 403s even once
-  // networking/CORS are otherwise fine. `.ts.net` names only ever resolve to
-  // devices already inside your own private tailnet, so trusting the whole
-  // suffix here doesn't reopen what the check exists to prevent.
-  server: { host: true, allowedHosts: [".ts.net"] },
-  preview: { host: true, allowedHosts: [".ts.net"] },
+  // protection. `tailscale serve` forwards the MagicDNS name (*.ts.net) as
+  // the Host header, so it has to be allowed. Those names only ever resolve
+  // inside your own private tailnet, so trusting the suffix doesn't reopen
+  // what the check exists to prevent.
+  server: { allowedHosts: ['.ts.net'], proxy },
+  preview: { allowedHosts: ['.ts.net'], proxy },
 })

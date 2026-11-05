@@ -34,11 +34,11 @@ Deferred work noticed along the way, not currently blocking anything.
   `docker-compose.yml` would go away in favour of a volume-mounted SQLite
   file for the `api` service, and `DATABASE_URL` / `POSTGRES_*` in
   `.env.example` would need updating.
-- **Infra: built-in Tailscale support for the frontend and API.** Today
-  Tailscale works only by hand: the README walks through finding the
-  host's MagicDNS name, then setting `VITE_API_BASE_URL` and
-  `CORS_ALLOWED_ORIGINS` to match. Proper support would give the app its
-  own tailnet identity, for example a `tailscale` sidecar container in
-  `docker-compose.yml` with `tailscale serve` in front of the frontend and
-  API. The setup would then stop depending on the host's name and ports,
-  and could serve over HTTPS.
+- ~~Infra: Tailscale support for the frontend and API~~ — done. The
+  frontend is served over tailnet HTTPS by `tailscale serve` on the host
+  (port 9443), and the frontend proxies the API on its own origin (see the
+  README's "Network access"). A possible follow-up is a
+  `tailscale` sidecar container, so the app gets its own tailnet name
+  instead of depending on the host's `tailscale serve` config.
+- **Frontend: UI improvements.** General polish pass on the web app:
+  layout and styling, mobile usability, and clearer loading/error states.

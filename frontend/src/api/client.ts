@@ -1,4 +1,7 @@
-const BASE_URL = import.meta.env.VITE_API_BASE_URL;
+// API paths are relative (`/api/...`): the browser calls the same origin
+// that served the SPA, and the frontend's server proxies those requests to
+// the backend (see vite.config.ts). There's no separate API URL to
+// configure, and no CORS involved.
 
 export class ApiError extends Error {
   status: number;
@@ -10,7 +13,7 @@ export class ApiError extends Error {
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${BASE_URL}${path}`, {
+  const response = await fetch(path, {
     headers: { "Content-Type": "application/json" },
     ...init,
   });

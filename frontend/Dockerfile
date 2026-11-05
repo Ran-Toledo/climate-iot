@@ -7,12 +7,6 @@ RUN npm install
 
 COPY . .
 
-# VITE_API_BASE_URL is baked into the static bundle at build time (Vite
-# inlines import.meta.env.VITE_* during `vite build`) -- it cannot be
-# changed by an `environment:` var at container start like the backend's
-# APP_HOST/APP_PORT. Changing it means rebuilding this image.
-ARG VITE_API_BASE_URL
-ENV VITE_API_BASE_URL=$VITE_API_BASE_URL
 RUN npm run build
 
 FROM node:20-alpine
@@ -27,4 +21,7 @@ COPY --from=build /app/dist ./dist
 COPY --from=build /app/vite.config.ts .
 COPY package.json .
 
+# --host 0.0.0.0: inside the container the server must listen on all
+# interfaces, or Docker's port forwarding can't reach it. Whether the host
+# exposes it beyond 127.0.0.1 is decided by docker-compose.yml, not here.
 CMD npx vite preview --host 0.0.0.0 --port $FRONTEND_PORT
