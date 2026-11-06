@@ -50,6 +50,13 @@ server {
         try_files $uri =404;
     }
 
+    # nginx's mime.types has no entry for .webmanifest; without this it would
+    # go out as application/octet-stream.
+    location = /manifest.webmanifest {
+        default_type application/manifest+json;
+        add_header Cache-Control "no-cache";
+    }
+
     # Client-side routes (React Router) fall back to index.html, which is
     # never cached so a rebuild shows up on the next load.
     location / {
