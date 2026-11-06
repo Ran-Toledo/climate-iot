@@ -15,6 +15,10 @@ class Device(Base):
     device_type: Mapped[str] = mapped_column(
         String(50), default="climate_controller", server_default="climate_controller"
     )
+    # name is whatever the device reports at registration (overwritten on
+    # every re-register). display_name is set from the app and never touched
+    # by the device; when set, the app shows it instead of name.
     name: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    display_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
     last_heartbeat_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)

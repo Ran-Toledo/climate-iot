@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.schemas.device_state import DeviceStateOut
 from app.schemas.telemetry import TelemetryOut
@@ -23,8 +23,23 @@ class DeviceOut(BaseModel):
     hardware_id: str
     device_type: str
     name: str | None
+    display_name: str | None
     last_heartbeat_at: datetime | None
     created_at: datetime
+
+
+class DeviceUpdate(BaseModel):
+    # App-side name only. null, or a blank string, clears it so the app
+    # falls back to the device-reported name.
+    display_name: str | None = Field(default=None, max_length=100)
+
+    @field_validator("display_name")
+    @classmethod
+    def _blank_to_none(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        value = value.strip()
+        return value or None
 
 
 class DeviceSummary(DeviceOut):

@@ -224,6 +224,7 @@ Ctrl+C to stop following logs.
 |---|---|---|
 | GET | `/api/v1/management/devices` | — (each device includes `device_state` and `latest_telemetry`) |
 | GET | `/api/v1/management/devices/{id}` | — (same shape as a list item) |
+| PATCH | `/api/v1/management/devices/{id}` | `{display_name: string \| null}` — the name the app shows; the device's own `name` (set at registration) is left alone. `null` or blank clears it |
 | DELETE | `/api/v1/management/devices/{id}` | — |
 | POST | `/api/v1/management/devices/{id}/commands` | `{type?, payload: {power?, target_temperature?: int}}` |
 | GET | `/api/v1/management/commands/{id}` | — |

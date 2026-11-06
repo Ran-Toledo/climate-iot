@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.session import get_db
 from app.models import Device
 from app.schemas.command import CommandCreate, CommandOut
-from app.schemas.device import DeviceOut, DeviceSummary
+from app.schemas.device import DeviceOut, DeviceSummary, DeviceUpdate
 from app.schemas.device_state import DeviceStateOut
 from app.schemas.telemetry import TelemetryOut
 from app.services import command_service, management_service, telemetry_service
@@ -37,6 +37,15 @@ async def get_device(device_id: int, db: AsyncSession = Depends(get_db)):
     device = await management_service.get_device(db, device_id)
     if device is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="device not found")
+    return await _build_device_summary(db, device)
+
+
+@router.patch("/devices/{device_id}", response_model=DeviceSummary)
+async def update_device(device_id: int, payload: DeviceUpdate, db: AsyncSession = Depends(get_db)):
+    device = await management_service.get_device(db, device_id)
+    if device is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="device not found")
+    device = await management_service.set_display_name(db, device, payload.display_name)
     return await _build_device_summary(db, device)
 
 
