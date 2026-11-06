@@ -14,6 +14,12 @@
 // (not 127.0.0.1) so it accepts connections from other devices.
 #define BACKEND_BASE_URL "http://192.168.1.50:8000"
 
+// Your computer's mDNS name WITHOUT ".local" (on Windows: the computer
+// name in lowercase, e.g. "laptop-abc123"; the ESP32 core appends
+// ".local" itself). Currently diagnostic only: the firmware looks it up
+// and logs the result, but still sends requests to BACKEND_BASE_URL.
+#define BACKEND_HOSTNAME "your-computer-name"
+
 // Optional human-readable name sent at registration. Leave as "" to omit
 // (the backend contract treats name as nullable).
 #define DEVICE_NAME "ESP32 Climate Device"

@@ -25,7 +25,16 @@
 #include "HeartbeatReporter.h"
 #include "TelemetryReporter.h"
 #include "CommandProcessor.h"
+#include "MdnsProbe.h"
 #include "secrets.h"
+
+// BACKEND_HOSTNAME (bare mDNS name, no ".local") is optional while the
+// mDNS probe is diagnostic-only; without it the probe just logs that it's
+// disabled.
+#ifndef BACKEND_HOSTNAME
+#warning "BACKEND_HOSTNAME is not defined in secrets.h; the mDNS probe will be disabled"
+#define BACKEND_HOSTNAME ""
+#endif
 
 #define DHT_PIN 4
 #define DHT_TYPE DHT11
@@ -44,6 +53,7 @@ BackendClient backendClient(BACKEND_BASE_URL);
 HeartbeatReporter heartbeatReporter(backendClient);
 TelemetryReporter telemetryReporter(backendClient);
 CommandProcessor commandProcessor(backendClient, acTransmitter, acState);
+MdnsProbe mdnsProbe(BACKEND_HOSTNAME, BACKEND_BASE_URL);
 String hardwareId;
 
 bool hasClimateReading = false;
@@ -94,6 +104,9 @@ void handleSerialCommand() {
 void handleNetworking() {
   unsigned long now = millis();
   wifi.update(now);
+  // Diagnostic only: logs mDNS lookups of the backend, never changes
+  // where requests go. Blocks for at most the query timeout (2 s).
+  mdnsProbe.update(now, wifi.isConnected(), hardwareId);
   if (!wifi.isConnected()) {
     return;
   }
