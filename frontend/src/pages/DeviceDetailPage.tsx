@@ -1,23 +1,35 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { type UseMutationResult, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { type FormEvent, type ReactNode, useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { createCommand, deleteDevice, getCommand, getDevice } from "../api/devices";
+import { createCommand, deleteDevice, getCommand, getDevice, renameDevice } from "../api/devices";
 import type { ClimateState, Command, Device } from "../api/types";
+import { ConfirmDialog } from "../components/ConfirmDialog";
+import { ErrorBanner } from "../components/ErrorBanner";
 import {
+  CheckIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
-  CheckCircleIcon,
+  DotsIcon,
+  DropletIcon,
   MinusIcon,
+  PencilIcon,
   PlusIcon,
   PowerIcon,
-  XCircleIcon,
+  TrashIcon,
 } from "../components/icons";
-import { ErrorBanner } from "../components/ErrorBanner";
 import { Skeleton } from "../components/Skeleton";
+import { Sparkline } from "../components/Sparkline";
+import { StatusPill } from "../components/StatusPill";
+import { useRecentTelemetry } from "../hooks/useRecentTelemetry";
+import { MAX_TARGET_TEMP, MIN_TARGET_TEMP, deviceLabel } from "../lib/device";
 import { formatRelativeTime } from "../lib/format";
 
-const MIN_TEMP = 10;
-const MAX_TEMP = 32;
+// -/+ taps are collected and sent as one command this long after the last
+// tap, so going from 22 to 18 is one IR transmission, not four.
+const STEP_SEND_DELAY_MS = 1000;
+const DEFAULT_TARGET = 22;
+
+type CommandPayload = { power?: boolean; target_temperature?: number };
 
 export function DeviceDetailPage() {
   const { deviceId } = useParams<{ deviceId: string }>();
@@ -26,13 +38,10 @@ export function DeviceDetailPage() {
   const queryClient = useQueryClient();
 
   const [activeCommandId, setActiveCommandId] = useState<number | null>(null);
+  const [renaming, setRenaming] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
-  const {
-    data: device,
-    isLoading,
-    isError,
-    error,
-  } = useQuery({
+  const { data: device, isLoading, isError, error, dataUpdatedAt } = useQuery({
     queryKey: ["device", id],
     queryFn: () => getDevice(id),
     refetchInterval: 5000,
@@ -53,12 +62,41 @@ export function DeviceDetailPage() {
     }
   }, [activeCommand, id, queryClient]);
 
+  // Applies a change to the cached device right away, so the UI doesn't
+  // flick back to the old value while the refetch is in flight.
+  function patchDesired(payload: CommandPayload) {
+    queryClient.setQueryData<Device>(["device", id], (old) =>
+      old?.device_state
+        ? {
+            ...old,
+            device_state: {
+              ...old.device_state,
+              desired_state: { ...old.device_state.desired_state, ...payload },
+            },
+          }
+        : old,
+    );
+  }
+
   const sendCommand = useMutation({
-    mutationFn: (payload: { power?: boolean; target_temperature?: number }) =>
-      createCommand(id, { payload }),
-    onSuccess: (command) => {
+    mutationFn: (payload: CommandPayload) => createCommand(id, { payload }),
+    // A poll already in flight could land after patchDesired and briefly
+    // show the old value; drop it, the refetch below brings fresh data.
+    onMutate: () => queryClient.cancelQueries({ queryKey: ["device", id] }),
+    onSuccess: (command, payload) => {
+      patchDesired(payload);
       setActiveCommandId(command.id);
       queryClient.invalidateQueries({ queryKey: ["device", id] });
+      queryClient.invalidateQueries({ queryKey: ["devices"] });
+    },
+  });
+
+  const rename = useMutation({
+    mutationFn: (displayName: string | null) => renameDevice(id, displayName),
+    onSuccess: (updated) => {
+      queryClient.setQueryData(["device", id], updated);
+      queryClient.invalidateQueries({ queryKey: ["devices"] });
+      setRenaming(false);
     },
   });
 
@@ -72,268 +110,531 @@ export function DeviceDetailPage() {
 
   if (isLoading) {
     return (
-      <div className="mx-auto max-w-md px-5 pt-8 pb-8">
+      <Page>
         <div className="flex items-center gap-3">
-          <Skeleton className="h-10 w-10 rounded-full" />
-          <div className="min-w-0 flex-1">
-            <Skeleton className="h-5 w-32" />
-          </div>
-          <Skeleton className="h-6 w-16 rounded-full" />
+          <Skeleton className="h-11 w-11 rounded-full" />
+          <Skeleton className="h-5 flex-1" />
+          <Skeleton className="h-11 w-11 rounded-full" />
         </div>
-        <div className="mt-4 flex flex-col gap-4">
-          <div className="grid grid-cols-2 gap-3">
-            <Skeleton className="h-[104px] rounded-xl" />
-            <Skeleton className="h-[104px] rounded-xl" />
-          </div>
-          <Skeleton className="h-[124px] rounded-xl" />
-        </div>
-      </div>
+        <Skeleton className="mt-4 h-[210px] rounded-2xl" />
+        <Skeleton className="mt-3 h-[190px] rounded-2xl" />
+      </Page>
     );
   }
 
-  if (isError || !device) {
+  if (!device) {
     return (
-      <div className="mx-auto max-w-md px-5 pt-8 pb-8">
-        <Link to="/" className="text-sm text-[#2a78d6] no-underline">
+      <Page>
+        <Link to="/" className="text-sm text-accent no-underline">
           &larr; Devices
         </Link>
         <div className="mt-4">
-          <ErrorBanner message={`Couldn't load device: ${(error as Error | undefined)?.message ?? "not found"}`} />
+          <ErrorBanner message={`Couldn't load this device: ${(error as Error | undefined)?.message ?? "not found"}`} />
         </div>
+      </Page>
+    );
+  }
+
+  return (
+    <Page>
+      <div className="flex items-center gap-1">
+        <Link
+          to="/"
+          aria-label="Back to devices"
+          className="-ml-2 flex h-11 w-11 flex-shrink-0 items-center justify-center text-ink no-underline"
+        >
+          <ChevronLeftIcon />
+        </Link>
+        <div className="min-w-0 flex-1 text-center">
+          {renaming ? (
+            <RenameForm
+              device={device}
+              busy={rename.isPending}
+              onSave={(name) => rename.mutate(name)}
+              onCancel={() => {
+                rename.reset();
+                setRenaming(false);
+              }}
+            />
+          ) : (
+            <>
+              <h1 className="m-0 truncate text-lg font-semibold">{deviceLabel(device)}</h1>
+              {device.display_name && (
+                <div className="truncate text-xs text-ink-3">
+                  Device name: {device.name ?? device.hardware_id}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+        <OverflowMenu
+          onRename={() => setRenaming(true)}
+          onDelete={() => setConfirmDelete(true)}
+        />
+      </div>
+
+      {rename.isError && (
+        <div className="mt-3">
+          <ErrorBanner message={`Couldn't rename: ${(rename.error as Error).message}`} />
+        </div>
+      )}
+
+      {isError && (
+        <div className="mt-3">
+          <ErrorBanner
+            message={`Can't reach the server. Showing data from ${formatRelativeTime(new Date(dataUpdatedAt).toISOString())}.`}
+          />
+        </div>
+      )}
+
+      <div className="mt-4 flex flex-col gap-3">
+        <ReadingCard device={device} />
+        <ControlCard
+          key={device.id}
+          device={device}
+          sendCommand={sendCommand}
+          activeCommandStatus={activeCommand?.status}
+        />
+      </div>
+
+      <ConfirmDialog
+        open={confirmDelete}
+        title={`Delete ${deviceLabel(device)}?`}
+        body="This removes the device and all its readings and commands. If it's still running, it will register again as a new device."
+        confirmLabel="Delete"
+        busy={removeDevice.isPending}
+        onConfirm={() => removeDevice.mutate()}
+        onCancel={() => setConfirmDelete(false)}
+      />
+      {removeDevice.isError && (
+        <div className="mt-3">
+          <ErrorBanner message={`Couldn't delete device: ${(removeDevice.error as Error).message}`} />
+        </div>
+      )}
+    </Page>
+  );
+}
+
+function Page({ children }: { children: ReactNode }) {
+  return <div className="mx-auto max-w-md px-5 pt-6 pb-10">{children}</div>;
+}
+
+function ReadingCard({ device }: { device: Device }) {
+  const { data: recent } = useRecentTelemetry(device.id);
+  const latest = device.latest_telemetry;
+
+  return (
+    <div className="flex flex-col items-center rounded-2xl border border-line bg-card px-4 pt-4 pb-3">
+      <StatusPill online={device.online} />
+      <div className="mt-2 text-[56px] leading-[1.05] font-semibold tabular-nums">
+        {latest ? `${latest.temperature.toFixed(1)}°` : "—"}
+      </div>
+      <div className="flex items-center gap-1 text-[13px] text-ink-2">
+        {latest ? (
+          <>
+            <DropletIcon />
+            {latest.humidity.toFixed(0)}% · updated {formatRelativeTime(latest.recorded_at)}
+          </>
+        ) : (
+          "No readings yet"
+        )}
+      </div>
+      <Link
+        to={`/devices/${device.id}/graph`}
+        className="mt-3 flex w-full flex-col gap-1 text-inherit no-underline"
+        aria-label="View temperature and humidity graph"
+      >
+        <Sparkline readings={recent} className="w-full" height={44} />
+        <div className="flex justify-between text-[11px] text-ink-3">
+          <span>Last 24h</span>
+          <span className="flex items-center gap-0.5 font-medium text-accent">
+            View graph <ChevronRightIcon className="h-3.5 w-3.5" />
+          </span>
+        </div>
+      </Link>
+    </div>
+  );
+}
+
+function ControlCard({
+  device,
+  sendCommand,
+  activeCommandStatus,
+}: {
+  device: Device;
+  sendCommand: UseMutationResult<Command, Error, CommandPayload>;
+  activeCommandStatus: "pending" | "completed" | "failed" | undefined;
+}) {
+  const desired = device.device_state?.desired_state;
+  const reported = device.device_state?.reported_state;
+
+  // Target the user is adjusting with -/+ but hasn't been sent yet.
+  const [draftTarget, setDraftTarget] = useState<number | null>(null);
+  const [typing, setTyping] = useState(false);
+  const timer = useRef<number | undefined>(undefined);
+  const pendingSend = useRef<number | null>(null);
+
+  // Leaving the page within the delay still sends the change.
+  useEffect(() => {
+    return () => {
+      window.clearTimeout(timer.current);
+      if (pendingSend.current !== null) {
+        createCommand(device.id, { payload: { target_temperature: pendingSend.current } }).catch(() => {});
+      }
+    };
+  }, [device.id]);
+
+  const sentTarget = sendCommand.isPending ? sendCommand.variables?.target_temperature : undefined;
+  const shownTarget = draftTarget ?? sentTarget ?? desired?.target_temperature ?? null;
+  const sentPower = sendCommand.isPending ? sendCommand.variables?.power : undefined;
+  const shownPower = sentPower ?? desired?.power ?? false;
+
+  function sendTarget(value: number) {
+    window.clearTimeout(timer.current);
+    pendingSend.current = null;
+    sendCommand.mutate({ target_temperature: value }, { onSettled: () => setDraftTarget(null) });
+  }
+
+  function step(delta: number) {
+    const base = shownTarget ?? DEFAULT_TARGET;
+    const next = Math.min(MAX_TARGET_TEMP, Math.max(MIN_TARGET_TEMP, base + delta));
+    setDraftTarget(next);
+    pendingSend.current = next;
+    window.clearTimeout(timer.current);
+    timer.current = window.setTimeout(() => sendTarget(next), STEP_SEND_DELAY_MS);
+  }
+
+  const scheduled = draftTarget !== null && !sendCommand.isPending;
+
+  return (
+    <div className="flex flex-col gap-3">
+      <div className="rounded-2xl border border-line bg-card p-4">
+        <div className="text-center text-[13px] text-ink-2">Target</div>
+        <div className="mt-1 flex items-center justify-between">
+          <RoundButton label="Decrease target temperature" onClick={() => step(-1)}>
+            <MinusIcon />
+          </RoundButton>
+          {typing ? (
+            <TargetInput
+              initial={shownTarget}
+              onSubmit={(value) => {
+                setTyping(false);
+                setDraftTarget(value);
+                sendTarget(value);
+              }}
+              onCancel={() => setTyping(false)}
+            />
+          ) : (
+            <button
+              type="button"
+              onClick={() => setTyping(true)}
+              aria-label="Type a target temperature"
+              className="min-h-14 min-w-28 rounded-xl px-2 text-[40px] leading-none font-semibold text-ink tabular-nums hover:bg-accent-soft"
+            >
+              {shownTarget !== null ? `${shownTarget}°` : "—"}
+            </button>
+          )}
+          <RoundButton label="Increase target temperature" onClick={() => step(1)}>
+            <PlusIcon />
+          </RoundButton>
+        </div>
+        {!typing && (
+          <div className="mt-1 text-center text-[11px] text-ink-3">Tap the number to type a value</div>
+        )}
+
+        <div className="mt-3 h-px bg-divider" />
+
+        <button
+          type="button"
+          role="switch"
+          aria-checked={shownPower}
+          onClick={() => sendCommand.mutate({ power: !shownPower })}
+          className="mt-1 flex min-h-12 w-full items-center justify-between bg-transparent px-0 text-ink"
+        >
+          <span className="flex items-center gap-2.5 text-[15px] font-medium">
+            <PowerIcon className={shownPower ? "text-accent" : "text-ink-3"} />
+            Power
+          </span>
+          <span
+            className={`flex h-[30px] w-[52px] items-center rounded-full p-[3px] transition-colors ${
+              shownPower ? "justify-end bg-accent" : "justify-start bg-ink-3"
+            }`}
+          >
+            <span className="h-6 w-6 rounded-full bg-white" />
+          </span>
+        </button>
+      </div>
+
+      <SyncStatus
+        device={device}
+        desired={desired}
+        reported={reported}
+        scheduled={scheduled}
+        sending={sendCommand.isPending || activeCommandStatus === "pending"}
+        sendError={sendCommand.isError ? sendCommand.error.message : null}
+        lastFailed={activeCommandStatus === "failed"}
+      />
+    </div>
+  );
+}
+
+function RoundButton({
+  label,
+  onClick,
+  children,
+}: {
+  label: string;
+  onClick: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      onClick={onClick}
+      className="flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-full border border-line-strong bg-transparent text-ink active:bg-accent-soft"
+    >
+      {children}
+    </button>
+  );
+}
+
+function TargetInput({
+  initial,
+  onSubmit,
+  onCancel,
+}: {
+  initial: number | null;
+  onSubmit: (value: number) => void;
+  onCancel: () => void;
+}) {
+  const [text, setText] = useState(initial !== null ? String(initial) : "");
+  const [invalid, setInvalid] = useState(false);
+
+  function submit(e: FormEvent) {
+    e.preventDefault();
+    const value = Number(text);
+    if (text.trim() === "" || !Number.isInteger(value) || value < MIN_TARGET_TEMP || value > MAX_TARGET_TEMP) {
+      setInvalid(true);
+      return;
+    }
+    onSubmit(value);
+  }
+
+  return (
+    <form noValidate onSubmit={submit} className="flex flex-col items-center gap-1.5">
+      <div className="flex items-center gap-1.5">
+        <input
+          type="number"
+          inputMode="numeric"
+          min={MIN_TARGET_TEMP}
+          max={MAX_TARGET_TEMP}
+          step={1}
+          autoFocus
+          value={text}
+          aria-label="Target temperature in °C"
+          aria-invalid={invalid}
+          onFocus={(e) => e.currentTarget.select()}
+          onChange={(e) => {
+            setText(e.target.value);
+            setInvalid(false);
+          }}
+          onKeyDown={(e) => e.key === "Escape" && onCancel()}
+          className={`h-12 w-20 rounded-xl border bg-page text-center text-2xl font-semibold text-ink tabular-nums outline-none focus:border-accent ${
+            invalid ? "border-danger" : "border-line-strong"
+          }`}
+        />
+        <span className="text-xl font-semibold">°</span>
+      </div>
+      {invalid && (
+        <span className="text-xs text-danger">
+          Whole number, {MIN_TARGET_TEMP}–{MAX_TARGET_TEMP}
+        </span>
+      )}
+      <div className="flex gap-1.5">
+        <button type="button" onClick={onCancel} className="h-9 rounded-lg px-3 text-[13px] text-ink-2">
+          Cancel
+        </button>
+        <button type="submit" className="h-9 rounded-lg bg-accent px-4 text-[13px] font-semibold text-on-accent">
+          Set
+        </button>
+      </div>
+    </form>
+  );
+}
+
+function SyncStatus({
+  device,
+  desired,
+  reported,
+  scheduled,
+  sending,
+  sendError,
+  lastFailed,
+}: {
+  device: Device;
+  desired: ClimateState | undefined;
+  reported: ClimateState | undefined;
+  scheduled: boolean;
+  sending: boolean;
+  sendError: string | null;
+  lastFailed: boolean;
+}) {
+  const line = "flex items-center justify-center gap-1.5 text-center text-xs";
+
+  if (scheduled) return <div className={`${line} text-accent`}>Sending in a moment…</div>;
+  if (sending) {
+    return (
+      <div className={`${line} text-accent`}>
+        <span className="h-2 w-2 animate-pulse rounded-full bg-accent" />
+        {device.online ? "Sending to the AC…" : "Queued. It'll be sent when the device is back online."}
+      </div>
+    );
+  }
+  if (sendError) return <div className={`${line} text-danger`}>Couldn't send the change: {sendError}</div>;
+  if (lastFailed) return <div className={`${line} text-danger`}>The device couldn't apply the last change.</div>;
+  if (!device.device_state || !desired || !reported) return null;
+
+  const inSync =
+    desired.power === reported.power && desired.target_temperature === reported.target_temperature;
+  if (inSync) {
+    if (reported.power == null && reported.target_temperature == null) return null;
+    return (
+      <div className={`${line} text-ink-2`}>
+        <CheckIcon className="text-ok" />
+        AC confirmed {describeState(reported)} · {formatRelativeTime(device.device_state.updated_at)}
       </div>
     );
   }
 
-  const desired = device.device_state?.desired_state;
-  const reported = device.device_state?.reported_state;
-  const inSync =
-    desired !== undefined &&
-    reported !== undefined &&
-    desired.power === reported.power &&
-    desired.target_temperature === reported.target_temperature;
-
-  const commandPending = sendCommand.isPending || activeCommand?.status === "pending";
-
-  function togglePower() {
-    sendCommand.mutate({ power: !(desired?.power ?? false) });
-  }
-
-  function stepTemperature(delta: number) {
-    const base = desired?.target_temperature ?? 22;
-    const next = Math.min(MAX_TEMP, Math.max(MIN_TEMP, base + delta));
-    sendCommand.mutate({ target_temperature: next });
-  }
-
   return (
-    <div className="mx-auto max-w-md px-5 pt-8 pb-8">
-      <div className="flex items-center gap-3">
-        <Link
-          to="/"
-          className="flex h-10 w-10 flex-shrink-0 items-center justify-center text-[#0b0b0b] no-underline"
-        >
-          <ChevronLeftIcon />
-        </Link>
-        <div className="min-w-0 flex-1">
-          <div className="text-xl font-semibold">{device.name ?? device.hardware_id}</div>
-          <div className="font-mono text-[13px] text-[#898781]">{device.hardware_id}</div>
-        </div>
-        <div
-          className={`flex flex-shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold ${
-            device.online ? "bg-[rgba(12,163,12,0.10)] text-[#0a7d0a]" : "bg-[rgba(137,135,129,0.12)] text-[#52514e]"
-          }`}
-        >
-          <span
-            className={`h-[7px] w-[7px] rounded-full ${device.online ? "bg-[#0ca30c]" : "bg-[#898781]"}`}
-          />
-          {device.online ? "Online" : "Offline"}
-        </div>
-      </div>
-
-      <div className="mt-4 flex flex-col gap-6">
-        <StatePanel desired={desired} reported={reported} inSync={inSync} device={device} />
-
-        <div className="flex flex-col gap-4 rounded-xl border border-[rgba(11,11,11,0.10)] bg-[#fcfcfb] p-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2.5">
-              <PowerIcon />
-              <span className="text-[15px] font-medium">Power</span>
-            </div>
-            <button
-              type="button"
-              role="switch"
-              aria-checked={desired?.power ?? false}
-              disabled={commandPending}
-              onClick={togglePower}
-              className={`flex h-[26px] w-11 items-center rounded-full p-[3px] transition-colors disabled:opacity-50 ${
-                desired?.power ? "justify-end bg-[#2a78d6]" : "justify-start bg-[#898781]"
-              }`}
-            >
-              <span className="h-5 w-5 rounded-full bg-[#fcfcfb]" />
-            </button>
-          </div>
-
-          <div className="h-px bg-[#e1e0d9]" />
-
-          <div className="flex items-center justify-between">
-            <span className="text-[15px] font-medium">Target temperature</span>
-            <div className="flex items-center gap-3.5">
-              <button
-                type="button"
-                aria-label="Decrease target temperature"
-                disabled={commandPending}
-                onClick={() => stepTemperature(-1)}
-                className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full border border-[rgba(11,11,11,0.16)] disabled:opacity-50"
-              >
-                <MinusIcon />
-              </button>
-              <span className="min-w-[48px] text-center text-xl font-semibold tabular-nums">
-                {desired?.target_temperature !== null && desired?.target_temperature !== undefined
-                  ? `${desired.target_temperature}°C`
-                  : "—"}
-              </span>
-              <button
-                type="button"
-                aria-label="Increase target temperature"
-                disabled={commandPending}
-                onClick={() => stepTemperature(1)}
-                className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full border border-[rgba(11,11,11,0.16)] disabled:opacity-50"
-              >
-                <PlusIcon />
-              </button>
-            </div>
-          </div>
-        </div>
-
-        {activeCommand && <CommandStatusStrip command={activeCommand} />}
-
-        <Link
-          to={`/devices/${device.id}/graph`}
-          className="flex flex-col gap-1 rounded-xl border border-[rgba(11,11,11,0.10)] bg-[#fcfcfb] p-4 text-inherit no-underline"
-        >
-          <div className="flex items-center justify-between">
-            <span className="text-[15px] font-semibold">Temperature &amp; humidity</span>
-            <div className="flex items-center gap-1 text-[#2a78d6]">
-              <span className="text-[13px] font-medium">View graph</span>
-              <ChevronRightIcon className="h-3.5 w-3.5" />
-            </div>
-          </div>
-          {device.latest_telemetry ? (
-            <div className="flex items-center gap-4 text-[13px] text-[#52514e]">
-              <span>{device.latest_telemetry.temperature.toFixed(1)}&deg;C now</span>
-              <span>{device.latest_telemetry.humidity.toFixed(0)}% humidity</span>
-            </div>
-          ) : (
-            <span className="text-[13px] text-[#898781]">No readings yet</span>
-          )}
-        </Link>
-
-        <button
-          type="button"
-          disabled={removeDevice.isPending}
-          onClick={() => {
-            if (window.confirm(`Delete "${device.name ?? device.hardware_id}"? This can't be undone.`)) {
-              removeDevice.mutate();
-            }
-          }}
-          className="self-start bg-transparent py-2 text-[13px] font-medium text-[#d03b3b] disabled:opacity-50"
-        >
-          {removeDevice.isPending ? "Deleting…" : "Delete device"}
-        </button>
-        {removeDevice.isError && (
-          <ErrorBanner message={`Couldn't delete device: ${(removeDevice.error as Error).message}`} />
-        )}
+    <div className="flex flex-col gap-1 rounded-xl bg-accent-soft p-3 text-xs">
+      <span className="font-medium text-accent">Waiting for the AC to confirm…</span>
+      <div className="flex justify-between text-ink-2">
+        <span>Asked for: {describeState(desired)}</span>
+        <span>AC reports: {describeState(reported)}</span>
       </div>
     </div>
   );
 }
 
-function StatePanel({
-  desired,
-  reported,
-  inSync,
+function describeState(state: ClimateState): string {
+  const parts: string[] = [];
+  if (state.power != null) parts.push(state.power ? "on" : "off");
+  if (state.target_temperature != null) parts.push(`${state.target_temperature}°`);
+  return parts.join(", ") || "nothing yet";
+}
+
+function RenameForm({
   device,
+  busy,
+  onSave,
+  onCancel,
 }: {
-  desired: ClimateState | undefined;
-  reported: ClimateState | undefined;
-  inSync: boolean;
   device: Device;
+  busy: boolean;
+  onSave: (name: string | null) => void;
+  onCancel: () => void;
 }) {
-  if (!device.device_state) {
-    return <p className="text-sm text-[#898781]">No state yet — device hasn't received a command.</p>;
-  }
+  const [text, setText] = useState(device.display_name ?? "");
+  const fallback = device.name ?? device.hardware_id;
 
   return (
-    <div className="flex flex-col gap-1.5">
-      <div className="grid grid-cols-2 gap-3">
-        <StateCard label="Desired" state={desired} />
-        <StateCard label="Reported" state={reported} />
-      </div>
-      <div className="pl-0.5 text-xs text-[#898781]">
-        {inSync ? "Both in agreement" : "Syncing"} &middot; updated{" "}
-        {formatRelativeTime(device.device_state.updated_at)}
-      </div>
-    </div>
-  );
-}
-
-function StateCard({ label, state }: { label: string; state: ClimateState | undefined }) {
-  const hasTarget = state?.target_temperature !== null && state?.target_temperature !== undefined;
-  return (
-    <div className="flex flex-col gap-2.5 rounded-xl border border-[rgba(11,11,11,0.10)] bg-[#fcfcfb] p-4">
-      <div className="text-xs font-semibold tracking-wide text-[#898781] uppercase">{label}</div>
-      <div className="flex items-baseline gap-0.5">
-        <span className="text-[28px] font-semibold">{hasTarget ? state!.target_temperature : "—"}</span>
-        {hasTarget && <span className="text-sm text-[#52514e]">°C</span>}
-      </div>
-      <div className="flex items-center gap-1.5">
-        <PowerIcon className={state?.power ? "h-3.5 w-3.5 text-[#2a78d6]" : "h-3.5 w-3.5 text-[#898781]"} />
-        <span className="text-[13px] text-[#52514e]">
-          {state?.power === null || state?.power === undefined
-            ? "Unknown"
-            : state.power
-              ? "Power on"
-              : "Power off"}
-        </span>
-      </div>
-    </div>
-  );
-}
-
-function CommandStatusStrip({ command }: { command: Command }) {
-  const describePayload = (payload: ClimateState) => {
-    const parts: string[] = [];
-    if (payload.power !== null && payload.power !== undefined) {
-      parts.push(payload.power ? "power on" : "power off");
-    }
-    if (payload.target_temperature !== null && payload.target_temperature !== undefined) {
-      parts.push(`target ${payload.target_temperature}°C`);
-    }
-    return parts.join(", ") || "state update";
-  };
-
-  const styles = {
-    pending: { bg: "rgba(42,120,214,0.06)", fg: "text-[#2a78d6]", label: "Sending…" },
-    completed: { bg: "rgba(12,163,12,0.06)", fg: "text-[#0a7d0a]", label: "Completed" },
-    failed: { bg: "rgba(208,59,59,0.06)", fg: "text-[#d03b3b]", label: "Failed" },
-  }[command.status];
-
-  return (
-    <div
-      className="flex items-center gap-2.5 rounded-[10px] p-3"
-      style={{ background: styles.bg }}
+    <form
+      onSubmit={(e) => {
+        e.preventDefault();
+        onSave(text.trim() || null);
+      }}
+      className="flex flex-col items-stretch gap-1"
     >
-      {command.status === "completed" && <CheckCircleIcon className={styles.fg} />}
-      {command.status === "failed" && <XCircleIcon className={styles.fg} />}
-      {command.status === "pending" && (
-        <span className={`h-2.5 w-2.5 flex-shrink-0 rounded-full bg-current ${styles.fg} animate-pulse`} />
-      )}
-      <div className="flex flex-col gap-0.5">
-        <span className="text-[13px] font-medium">Set {describePayload(command.payload)}</span>
-        <span className="text-xs text-[#898781]">
-          {styles.label}
-          {command.completed_at && ` · ${formatRelativeTime(command.completed_at)}`}
-        </span>
+      <input
+        autoFocus
+        maxLength={100}
+        value={text}
+        placeholder={fallback}
+        aria-label="Name shown in the app"
+        onChange={(e) => setText(e.target.value)}
+        onKeyDown={(e) => e.key === "Escape" && onCancel()}
+        className="h-10 rounded-lg border border-line-strong bg-card px-3 text-center text-base font-semibold text-ink outline-none focus:border-accent"
+      />
+      <span className="text-[11px] text-ink-3">Leave empty to use the device's own name</span>
+      <div className="flex justify-center gap-1.5">
+        <button type="button" onClick={onCancel} className="h-9 rounded-lg px-3 text-[13px] text-ink-2">
+          Cancel
+        </button>
+        <button
+          type="submit"
+          disabled={busy}
+          className="h-9 rounded-lg bg-accent px-4 text-[13px] font-semibold text-on-accent disabled:opacity-60"
+        >
+          {busy ? "Saving…" : "Save"}
+        </button>
       </div>
+    </form>
+  );
+}
+
+function OverflowMenu({ onRename, onDelete }: { onRename: () => void; onDelete: () => void }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const close = (e: PointerEvent) => {
+      if (!ref.current?.contains(e.target as Node)) setOpen(false);
+    };
+    const esc = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
+    document.addEventListener("pointerdown", close);
+    document.addEventListener("keydown", esc);
+    return () => {
+      document.removeEventListener("pointerdown", close);
+      document.removeEventListener("keydown", esc);
+    };
+  }, [open]);
+
+  const item = "flex w-full items-center gap-2.5 bg-transparent px-3.5 py-3 text-left text-sm";
+
+  return (
+    <div ref={ref} className="relative -mr-2 flex-shrink-0">
+      <button
+        type="button"
+        aria-label="More actions"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+        className="flex h-11 w-11 items-center justify-center rounded-full bg-transparent text-ink"
+      >
+        <DotsIcon />
+      </button>
+      {open && (
+        <div
+          role="menu"
+          className="absolute top-11 right-1 z-10 w-48 overflow-hidden rounded-xl border border-line bg-card shadow-lg"
+        >
+          <button
+            type="button"
+            role="menuitem"
+            className={`${item} text-ink`}
+            onClick={() => {
+              setOpen(false);
+              onRename();
+            }}
+          >
+            <PencilIcon /> Rename
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            className={`${item} border-t border-divider text-danger`}
+            onClick={() => {
+              setOpen(false);
+              onDelete();
+            }}
+          >
+            <TrashIcon /> Delete device
+          </button>
+        </div>
+      )}
     </div>
   );
 }

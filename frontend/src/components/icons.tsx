@@ -1,16 +1,27 @@
+import type { ReactNode } from "react";
+
 interface IconProps {
   className?: string;
 }
 
-// The app's mark -- matches public/favicon.svg. Kept in sync by hand; the
-// favicon can't reuse this component directly since it has to be a static
-// file, not React.
+// The app's mark -- the same design as public/favicon.svg and the
+// home-screen icons, which scripts/render-icons.mjs generates. Kept in sync
+// by hand; those have to be static files, not React.
 export function AppIcon({ className }: IconProps) {
   return (
-    <svg viewBox="0 0 24 24" className={className}>
-      <rect width="24" height="24" rx="6" fill="#2a78d6" />
-      <line x1="12" y1="5.5" x2="12" y2="13" stroke="#fcfcfb" strokeWidth="2.2" strokeLinecap="round" />
-      <circle cx="12" cy="16.5" r="2.8" fill="#fcfcfb" />
+    <svg viewBox="0 0 64 64" className={className} aria-hidden="true">
+      <rect width="64" height="64" rx="14" fill="#2a78d6" />
+      <path
+        d="M13 31 L32 15 L51 31"
+        fill="none"
+        stroke="#fcfcfb"
+        strokeWidth="4.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path d="M19 28 V49 H45 V28" fill="none" stroke="#fcfcfb" strokeWidth="4.5" strokeLinejoin="round" />
+      <line x1="32" y1="30" x2="32" y2="38" stroke="#ff8a3d" strokeWidth="4" strokeLinecap="round" />
+      <circle cx="32" cy="41.5" r="4.5" fill="#ff8a3d" />
     </svg>
   );
 }
@@ -139,5 +150,78 @@ export function XCircleIcon({ className }: IconProps) {
       <circle cx="12" cy="12" r="9" />
       <path d="M9.5 9.5l5 5M14.5 9.5l-5 5" />
     </svg>
+  );
+}
+
+function StrokeIcon({ className, size = 20, children }: IconProps & { size?: number; children: ReactNode }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      className={className}
+    >
+      {children}
+    </svg>
+  );
+}
+
+export function DotsIcon({ className }: IconProps) {
+  return (
+    <StrokeIcon className={className} size={22}>
+      <circle cx="5" cy="12" r="1" />
+      <circle cx="12" cy="12" r="1" />
+      <circle cx="19" cy="12" r="1" />
+    </StrokeIcon>
+  );
+}
+
+export function DropletIcon({ className }: IconProps) {
+  return (
+    <StrokeIcon className={className} size={14}>
+      <path d="M12 3.5s-6 6.6-6 10.5a6 6 0 0 0 12 0c0-3.9-6-10.5-6-10.5z" />
+    </StrokeIcon>
+  );
+}
+
+export function CheckIcon({ className }: IconProps) {
+  return (
+    <StrokeIcon className={className} size={14}>
+      <path d="M5 12l5 5L20 7" />
+    </StrokeIcon>
+  );
+}
+
+export function PencilIcon({ className }: IconProps) {
+  return (
+    <StrokeIcon className={className} size={18}>
+      <path d="M4 20h4L19 9l-4-4L4 16v4z" />
+      <path d="M13.5 6.5l4 4" />
+    </StrokeIcon>
+  );
+}
+
+export function TrashIcon({ className }: IconProps) {
+  return (
+    <StrokeIcon className={className} size={18}>
+      <path d="M4 7h16" />
+      <path d="M10 11v6M14 11v6" />
+      <path d="M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12" />
+      <path d="M9 7V4h6v3" />
+    </StrokeIcon>
+  );
+}
+
+export function ChevronDownIcon({ className }: IconProps) {
+  return (
+    <StrokeIcon className={className} size={18}>
+      <path d="M6 9l6 6 6-6" />
+    </StrokeIcon>
   );
 }

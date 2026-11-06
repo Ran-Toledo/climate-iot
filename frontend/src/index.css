@@ -1,8 +1,101 @@
 @import "tailwindcss";
 
+/* Colour tokens. Components use the Tailwind classes these generate
+   (bg-page, bg-card, text-ink-2, border-line, ...) instead of raw hex, so
+   dark mode is just a second set of values below. */
+:root {
+  color-scheme: light dark;
+
+  --c-page: #f9f9f7;
+  --c-card: #fcfcfb;
+  --c-ink: #0b0b0b;
+  --c-ink-2: #52514e;
+  --c-ink-3: #898781;
+  --c-line: rgba(11, 11, 11, 0.1);
+  --c-line-strong: rgba(11, 11, 11, 0.18);
+  --c-divider: #e1e0d9;
+  --c-accent: #2a78d6;
+  --c-accent-soft: rgba(42, 120, 214, 0.08);
+  --c-on-accent: #ffffff;
+  --c-ok: #0a7d0a;
+  --c-ok-dot: #0ca30c;
+  --c-ok-soft: rgba(12, 163, 12, 0.1);
+  --c-danger: #d03b3b;
+  --c-danger-soft: rgba(208, 59, 59, 0.08);
+  --c-humidity: #1baf7a;
+  --c-target: #e8772e;
+  --c-tooltip: #0b0b0b;
+  --c-on-tooltip: #fcfcfb;
+  --c-on-tooltip-2: #c3c2b7;
+  --c-scrim: rgba(11, 11, 11, 0.4);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --c-page: #121315;
+    --c-card: #1b1c1f;
+    --c-ink: #ececea;
+    --c-ink-2: #b5b3ad;
+    --c-ink-3: #85837d;
+    --c-line: rgba(255, 255, 255, 0.1);
+    --c-line-strong: rgba(255, 255, 255, 0.2);
+    --c-divider: #2c2d31;
+    --c-accent: #5aa0f0;
+    --c-accent-soft: rgba(90, 160, 240, 0.14);
+    --c-on-accent: #0b0b0b;
+    --c-ok: #5fd35f;
+    --c-ok-dot: #3ad13a;
+    --c-ok-soft: rgba(60, 200, 60, 0.14);
+    --c-danger: #f07a7a;
+    --c-danger-soft: rgba(240, 112, 112, 0.12);
+    --c-humidity: #3cc995;
+    --c-target: #ff9a55;
+    --c-tooltip: #ececea;
+    --c-on-tooltip: #121315;
+    --c-on-tooltip-2: #52514e;
+    --c-scrim: rgba(0, 0, 0, 0.6);
+  }
+}
+
+@theme inline {
+  --color-page: var(--c-page);
+  --color-card: var(--c-card);
+  --color-ink: var(--c-ink);
+  --color-ink-2: var(--c-ink-2);
+  --color-ink-3: var(--c-ink-3);
+  --color-line: var(--c-line);
+  --color-line-strong: var(--c-line-strong);
+  --color-divider: var(--c-divider);
+  --color-accent: var(--c-accent);
+  --color-accent-soft: var(--c-accent-soft);
+  --color-on-accent: var(--c-on-accent);
+  --color-ok: var(--c-ok);
+  --color-ok-dot: var(--c-ok-dot);
+  --color-ok-soft: var(--c-ok-soft);
+  --color-danger: var(--c-danger);
+  --color-danger-soft: var(--c-danger-soft);
+  --color-humidity: var(--c-humidity);
+  --color-target: var(--c-target);
+  --color-tooltip: var(--c-tooltip);
+  --color-on-tooltip: var(--c-on-tooltip);
+  --color-on-tooltip-2: var(--c-on-tooltip-2);
+  --color-scrim: var(--c-scrim);
+}
+
 body {
   margin: 0;
-  background: #f9f9f7;
-  color: #0b0b0b;
+  background: var(--c-page);
+  color: var(--c-ink);
   font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Number inputs: no spinner arrows (the app has its own -/+ buttons). */
+input[type="number"]::-webkit-inner-spin-button,
+input[type="number"]::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+input[type="number"] {
+  -moz-appearance: textfield;
 }

@@ -22,7 +22,10 @@ export interface Device {
   id: number;
   hardware_id: string;
   device_type: string;
+  /** What the device reports at registration; it overwrites this each time. */
   name: string | null;
+  /** Set from the app; shown instead of name when present. */
+  display_name: string | null;
   last_heartbeat_at: string | null;
   created_at: string;
   online: boolean;

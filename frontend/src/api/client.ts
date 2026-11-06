@@ -19,8 +19,16 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   });
 
   if (!response.ok) {
-    const detail = await response.text();
-    throw new ApiError(response.status, detail || response.statusText);
+    // FastAPI errors look like {"detail": "device not found"}; show that
+    // text rather than the raw body.
+    let message = response.statusText || `HTTP ${response.status}`;
+    try {
+      const body = await response.json();
+      if (typeof body?.detail === "string") message = body.detail;
+    } catch {
+      // Not JSON: keep the status text.
+    }
+    throw new ApiError(response.status, message);
   }
 
   if (response.status === 204) {
@@ -36,6 +44,10 @@ export function apiGet<T>(path: string): Promise<T> {
 
 export function apiPost<T>(path: string, body: unknown): Promise<T> {
   return request<T>(path, { method: "POST", body: JSON.stringify(body) });
+}
+
+export function apiPatch<T>(path: string, body: unknown): Promise<T> {
+  return request<T>(path, { method: "PATCH", body: JSON.stringify(body) });
 }
 
 export function apiDelete(path: string): Promise<void> {

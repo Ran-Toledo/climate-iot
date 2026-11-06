@@ -1,4 +1,4 @@
-import { apiDelete, apiGet, apiPost } from "./client";
+import { apiDelete, apiGet, apiPatch, apiPost } from "./client";
 import type {
   Command,
   CreateCommandPayload,
@@ -15,6 +15,11 @@ export function listDevices(): Promise<Device[]> {
 
 export function getDevice(deviceId: number): Promise<Device> {
   return apiGet<Device>(`${MANAGEMENT_BASE}/devices/${deviceId}`);
+}
+
+/** Sets the app-side name; null or "" clears it (the device's own name shows again). */
+export function renameDevice(deviceId: number, displayName: string | null): Promise<Device> {
+  return apiPatch<Device>(`${MANAGEMENT_BASE}/devices/${deviceId}`, { display_name: displayName });
 }
 
 export function deleteDevice(deviceId: number): Promise<void> {
