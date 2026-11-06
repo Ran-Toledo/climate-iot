@@ -9,19 +9,18 @@ COPY . .
 
 RUN npm run build
 
-FROM node:20-alpine
+# Runtime: nginx serves the static build and proxies /api, /docs etc. to the
+# backend. A few MiB of RAM, against ~70 MiB for `vite preview`, which ran
+# two Node processes (the npx wrapper plus Vite) just to serve static files.
+FROM nginx:1.27-alpine
 
-WORKDIR /app
+# The image's entrypoint renders /etc/nginx/templates/*.template into
+# /etc/nginx/conf.d/ with envsubst at start. The filter limits substitution
+# to our own variables so nginx's $host, $uri etc. survive.
+ENV NGINX_ENVSUBST_FILTER="^(FRONTEND_PORT|API_PROXY_TARGET)$"
+COPY nginx/default.conf.template /etc/nginx/templates/default.conf.template
+COPY --from=build /app/dist /usr/share/nginx/html
 
-# Full node_modules (not just `vite`) to match this project's existing
-# Dockerfiles, which don't separate build-only from runtime dependencies
-# either -- simplicity over image-size optimization.
-COPY --from=build /app/node_modules ./node_modules
-COPY --from=build /app/dist ./dist
-COPY --from=build /app/vite.config.ts .
-COPY package.json .
-
-# --host 0.0.0.0: inside the container the server must listen on all
-# interfaces, or Docker's port forwarding can't reach it. Whether the host
-# exposes it beyond 127.0.0.1 is decided by docker-compose.yml, not here.
-CMD npx vite preview --host 0.0.0.0 --port $FRONTEND_PORT
+# nginx listens on FRONTEND_PORT on all of the container's interfaces;
+# whether the host exposes it beyond 127.0.0.1 is decided by
+# docker-compose.yml, not here. CMD comes from the base image.

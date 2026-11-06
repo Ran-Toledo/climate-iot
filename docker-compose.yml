@@ -38,8 +38,9 @@ services:
     build: ./frontend
     environment:
       FRONTEND_PORT: ${FRONTEND_PORT:-4173}
-      # Where the frontend's server forwards /api, /docs etc. (see
-      # frontend/vite.config.ts). The browser only ever talks to the frontend.
+      # nginx in the frontend container serves the SPA and forwards /api,
+      # /docs etc. here (see frontend/nginx/default.conf.template). The
+      # browser only ever talks to the frontend.
       API_PROXY_TARGET: http://api:${APP_PORT:-8000}
     # Published on 127.0.0.1 only, so it isn't reachable over Wi-Fi/LAN or a
     # plain-HTTP tailnet IP. Other devices use `tailscale serve`'s HTTPS

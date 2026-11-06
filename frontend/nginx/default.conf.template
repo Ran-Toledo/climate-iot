@@ -1,0 +1,59 @@
+# Rendered at container start by the nginx image's entrypoint, which runs
+# envsubst on /etc/nginx/templates/*.template into /etc/nginx/conf.d/.
+# Only ${FRONTEND_PORT} and ${API_PROXY_TARGET} are substituted (see
+# NGINX_ENVSUBST_FILTER in the Dockerfile); nginx's own $variables are
+# left alone.
+
+# Docker's embedded DNS. proxy_pass below uses a variable, so nginx looks
+# `api` up per request (cached 10 s) instead of once at startup. That way
+# nginx starts even if the api container is down, and keeps working after
+# the api container is recreated with a new IP.
+resolver 127.0.0.11 valid=10s ipv6=off;
+
+# Host-header allowlist, same as the old `vite preview` allowedHosts check
+# (anti DNS-rebinding): localhost, bare IPs, and Tailscale MagicDNS names
+# (`tailscale serve` forwards *.ts.net as the Host). Anything else gets 403.
+server {
+    listen ${FRONTEND_PORT} default_server;
+    server_name _;
+    return 403;
+}
+
+server {
+    listen ${FRONTEND_PORT};
+    server_name localhost
+                ~^\d+\.\d+\.\d+\.\d+$
+                ~^\[[0-9a-fA-F:.]+\]$
+                ~\.ts\.net$;
+
+    root /usr/share/nginx/html;
+    server_tokens off;
+
+    gzip on;
+    gzip_types text/css application/javascript application/json image/svg+xml;
+
+    set $api_upstream ${API_PROXY_TARGET};
+
+    # The SPA calls the API on its own origin; forward these to the backend.
+    # Same prefixes as the dev server's proxy in vite.config.ts. With a
+    # variable and no URI part, proxy_pass forwards the request URI as is.
+    # Host defaults to the upstream's (like Vite's changeOrigin: true).
+    location /api          { proxy_pass $api_upstream; }
+    location /health       { proxy_pass $api_upstream; }
+    location /docs         { proxy_pass $api_upstream; }
+    location /redoc        { proxy_pass $api_upstream; }
+    location = /openapi.json { proxy_pass $api_upstream; }
+
+    # Vite's hashed build output never changes under the same name.
+    location /assets/ {
+        add_header Cache-Control "public, max-age=31536000, immutable";
+        try_files $uri =404;
+    }
+
+    # Client-side routes (React Router) fall back to index.html, which is
+    # never cached so a rebuild shows up on the next load.
+    location / {
+        add_header Cache-Control "no-cache";
+        try_files $uri $uri/ /index.html;
+    }
+}

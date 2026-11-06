@@ -87,11 +87,12 @@ and controls, a temperature/humidity graph) lives in `frontend/` and is
 already part of `docker compose up` above as the `frontend` service —
 open http://localhost:5173 (or your `FRONTEND_HOST_PORT`) once it's up.
 
-The SPA calls the API with relative URLs (`/api/...`), and the frontend's
-server proxies those requests to the `api` container (`/health`, `/docs`,
-`/redoc` and `/openapi.json` too; see `frontend/vite.config.ts`). There's
-no API URL to configure and no CORS involved, so one image works from any
-address.
+The frontend container is nginx: it serves the built SPA and proxies
+`/api`, `/health`, `/docs`, `/redoc` and `/openapi.json` to the `api`
+container (see `frontend/nginx/default.conf.template`; `npm run dev` does
+the same through `frontend/vite.config.ts`). The SPA calls the API with
+relative URLs (`/api/...`), so there's no API URL to configure and no CORS
+involved, and one image works from any address.
 
 For local frontend development without rebuilding a container on every
 change, run it outside Docker instead — see `frontend/README.md`.
@@ -277,8 +278,3 @@ raw readings; a consumer computes aggregates itself.
 - `since`/`until` on `GET .../telemetry` are parsed as-is by Pydantic; a
   naive (no-offset) timestamp is not normalized to UTC before the query.
   Always pass an offset (e.g. `...Z` or `+00:00`) to avoid surprises.
-- The frontend's Docker image serves its production build via `vite
-  preview` rather than a dedicated static-file server (nginx, etc.) — not
-  meant for real production traffic, but consistent with the rest of this
-  MVP's "simple over optimized" posture, and it reuses the same toolchain
-  already in `frontend/package.json` instead of adding a new one.
