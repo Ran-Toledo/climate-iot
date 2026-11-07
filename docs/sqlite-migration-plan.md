@@ -215,5 +215,12 @@ re-registers itself on its next request.
 - **Type looseness.** SQLite won't reject wrong-typed values at the DB
   layer. Pydantic validation at the API boundary is the real guard, which
   is already the case for the JSON columns.
-- **Rollback:** keep the Postgres volume until the cut-over is verified.
-  Reverting is `git switch dev` plus `docker compose up -d`.
+- **Rollback:** no longer possible with data. The cut-over was verified
+  (integrity check, no orphan rows, history back to 2026-08-26 present)
+  and the old Postgres volume, `climateiot_db_data`, was deleted on
+  2026-11-07. The Postgres version of the code is still on `main`
+  (`b0c4171`) until `main` is updated, but starting it would give an
+  empty database: `scripts/pg_to_sqlite.py` only copies Postgres into
+  SQLite, not back. To undo a bad change now, restore a SQLite backup
+  instead (see "Backups" above; `climate_iot.backup-2026-11-06.db` in the
+  `api_data` volume is the one taken before migration 0002).
