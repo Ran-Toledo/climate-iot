@@ -32,6 +32,14 @@ class BackendClient {
               const char *deviceName);
   bool isRegistered() const;
 
+  // BackendResolver picks the address; this swaps it in. Registration
+  // state is kept (the backend is the same, just reached differently).
+  void setBaseUrl(const String &baseUrl);
+  // Consecutive requests that failed to reach any server (see
+  // noteHttpCode); BackendResolver re-resolves after a few.
+  int consecutiveFailures() const;
+  void resetFailures();
+
   // Heartbeat/telemetry/commands: plain single-attempt requests, each
   // blocking for up to the request timeout while in flight (a real
   // network call, not a tight loop). Callers gate call frequency
@@ -47,4 +55,7 @@ class BackendClient {
   bool registered_;
   unsigned long nextAttemptMs_;
   unsigned long backoffMs_;
+  int consecutiveFailures_;
+
+  void noteHttpCode(int httpCode);
 };

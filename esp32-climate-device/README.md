@@ -146,7 +146,14 @@ recur:
   `secrets.h` means the ESP32 itself, never your computer — use your
   computer's LAN IP. Also double-check the port: `docker-compose.yml`
   maps `API_HOST_PORT` (from the root `.env`) to the container's port,
-  and those aren't always the same value.
+  and those aren't always the same value. The `[backend] using … (source:
+  …)` serial line shows which address the firmware picked (mDNS, the
+  saved NVS address, or `BACKEND_BASE_URL`).
+- **Testing the address fallbacks.** `pio run -e test-wrong-host -t upload
+  -t monitor` uses a hostname that can't resolve, so it should fall back
+  to the saved NVS address; `-e test-wrong-host-no-nvs` also erases NVS
+  at boot, so it should fall back to `BACKEND_BASE_URL`. Reflash the
+  default env afterwards.
 - **Edited the wrong secrets file.** `include/secrets.example.h` is the
   *committed template* — never put real credentials there. Real values go
   in `include/secrets.h` (gitignored).
@@ -351,6 +358,9 @@ lib/
    accepts connections from other devices on the network — check how
    it's started/configured (e.g. uvicorn's `--host` flag or equivalent)
    if unsure.
+   Also set `BACKEND_HOSTNAME` to your computer's name (lowercase, no
+   `.local`): the firmware prefers finding the backend over mDNS and
+   falls back to `BACKEND_BASE_URL` (see the troubleshooting notes).
 4. `include/secrets.h` is gitignored — it will never be committed.
 
 The device's `hardware_id` is derived from the ESP32's eFuse MAC (e.g.

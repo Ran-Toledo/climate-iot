@@ -112,9 +112,15 @@ In particular:
 - **The frontend is published on `127.0.0.1` only**, so it isn't reachable
   over Wi-Fi/LAN or on the plain-HTTP tailnet IP. Use the HTTPS address.
 - **The API is published on every interface**, so the ESP32 can reach it
-  over Wi-Fi. Point its `BACKEND_BASE_URL`
-  (`esp32-climate-device/include/secrets.h`) at
-  `http://<this machine's LAN IP>:<API_HOST_PORT>`.
+  over Wi-Fi. In `esp32-climate-device/include/secrets.h`, set
+  `BACKEND_BASE_URL` to `http://<this machine's LAN IP>:<API_HOST_PORT>`
+  and `BACKEND_HOSTNAME` to this machine's name (lowercase, no
+  `.local`). The ESP32 looks the backend up in this order: mDNS
+  (`<BACKEND_HOSTNAME>.local`, accepted only on its own subnet), then the
+  last mDNS address it saved in flash (NVS), then the host in
+  `BACKEND_BASE_URL`. The port always comes from `BACKEND_BASE_URL`. It
+  resolves at boot and again after 3 consecutive connection failures;
+  serial lines starting `[backend]` show which source it used.
 - **The database is a SQLite file** in the `api` container's `/data`
   volume, with no port at all. For a SQL shell, use
   `docker compose exec api python -m sqlite3 /data/climate_iot.db`.

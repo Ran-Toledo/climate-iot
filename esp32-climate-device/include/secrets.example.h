@@ -16,8 +16,12 @@
 
 // Your computer's mDNS name WITHOUT ".local" (on Windows: the computer
 // name in lowercase, e.g. "laptop-abc123"; the ESP32 core appends
-// ".local" itself). Currently diagnostic only: the firmware looks it up
-// and logs the result, but still sends requests to BACKEND_BASE_URL.
+// ".local" itself). The firmware finds the backend in this order:
+//   1. this name over mDNS (only if the answer is on the ESP32's subnet),
+//   2. the last address mDNS returned, saved on the ESP32 (NVS),
+//   3. the host in BACKEND_BASE_URL.
+// The port always comes from BACKEND_BASE_URL. So if your computer's IP
+// changes, the ESP32 still finds it without reflashing.
 #define BACKEND_HOSTNAME "your-computer-name"
 
 // Optional human-readable name sent at registration. Leave as "" to omit

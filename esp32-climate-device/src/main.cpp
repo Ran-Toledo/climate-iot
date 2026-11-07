@@ -25,15 +25,22 @@
 #include "HeartbeatReporter.h"
 #include "TelemetryReporter.h"
 #include "CommandProcessor.h"
-#include "MdnsProbe.h"
+#include "BackendResolver.h"
 #include "secrets.h"
 
-// BACKEND_HOSTNAME (bare mDNS name, no ".local") is optional while the
-// mDNS probe is diagnostic-only; without it the probe just logs that it's
-// disabled.
+// BACKEND_HOSTNAME (bare mDNS name, no ".local") is the first choice for
+// finding the backend; without it BackendResolver falls back to the last
+// saved address, then BACKEND_BASE_URL.
 #ifndef BACKEND_HOSTNAME
-#warning "BACKEND_HOSTNAME is not defined in secrets.h; the mDNS probe will be disabled"
+#warning "BACKEND_HOSTNAME is not defined in secrets.h; mDNS lookup of the backend is disabled"
 #define BACKEND_HOSTNAME ""
+#endif
+
+// Test builds (see the test-* envs in platformio.ini) swap in a hostname
+// that won't resolve, to exercise the fallbacks.
+#ifdef BACKEND_HOSTNAME_OVERRIDE
+#undef BACKEND_HOSTNAME
+#define BACKEND_HOSTNAME BACKEND_HOSTNAME_OVERRIDE
 #endif
 
 #define DHT_PIN 4
@@ -53,7 +60,7 @@ BackendClient backendClient(BACKEND_BASE_URL);
 HeartbeatReporter heartbeatReporter(backendClient);
 TelemetryReporter telemetryReporter(backendClient);
 CommandProcessor commandProcessor(backendClient, acTransmitter, acState);
-MdnsProbe mdnsProbe(BACKEND_HOSTNAME, BACKEND_BASE_URL);
+BackendResolver backendResolver(BACKEND_HOSTNAME, BACKEND_BASE_URL);
 String hardwareId;
 
 bool hasClimateReading = false;
@@ -104,11 +111,15 @@ void handleSerialCommand() {
 void handleNetworking() {
   unsigned long now = millis();
   wifi.update(now);
-  // Diagnostic only: logs mDNS lookups of the backend, never changes
-  // where requests go. Blocks for at most the query timeout (2 s).
-  mdnsProbe.update(now, wifi.isConnected(), hardwareId);
   if (!wifi.isConnected()) {
     return;
+  }
+
+  // Picks the backend address when Wi-Fi first connects, and again after
+  // repeated connection failures. Blocks for at most the mDNS timeout (2 s).
+  if (backendResolver.update(now, hardwareId, backendClient.consecutiveFailures())) {
+    backendClient.setBaseUrl(backendResolver.baseUrl());
+    backendClient.resetFailures();
   }
 
   if (!backendClient.isRegistered()) {
@@ -128,6 +139,10 @@ void setup() {
 
   climateSensor.begin();
   acTransmitter.begin();
+
+#ifdef BACKEND_RESOLVER_TEST_ERASE_NVS
+  BackendResolver::eraseSavedAddress();
+#endif
 
   hardwareId = getHardwareId();
   Serial.print("Hardware ID: ");

@@ -21,9 +21,30 @@ unsigned long jitteredBackoff(unsigned long backoffMs) {
 }  // namespace
 
 BackendClient::BackendClient(const String &baseUrl)
-    : baseUrl_(baseUrl), registered_(false), nextAttemptMs_(0), backoffMs_(kInitialBackoffMs) {}
+    : baseUrl_(baseUrl),
+      registered_(false),
+      nextAttemptMs_(0),
+      backoffMs_(kInitialBackoffMs),
+      consecutiveFailures_(0) {}
 
 bool BackendClient::isRegistered() const { return registered_; }
+
+void BackendClient::setBaseUrl(const String &baseUrl) { baseUrl_ = baseUrl; }
+
+int BackendClient::consecutiveFailures() const { return consecutiveFailures_; }
+
+void BackendClient::resetFailures() { consecutiveFailures_ = 0; }
+
+// Only connection-level failures count (HTTPClient's negative codes:
+// refused, timeout, ...): those suggest the address is wrong. Any HTTP
+// status means we reached a server, so it resets the count.
+void BackendClient::noteHttpCode(int httpCode) {
+  if (httpCode < 0) {
+    consecutiveFailures_++;
+  } else {
+    consecutiveFailures_ = 0;
+  }
+}
 
 void BackendClient::update(unsigned long nowMs, const String &hardwareId, const char *deviceType,
                             const char *deviceName) {
@@ -49,6 +70,7 @@ void BackendClient::update(unsigned long nowMs, const String &hardwareId, const 
   http.begin(baseUrl_ + "/api/v1/device/register");
   http.addHeader("Content-Type", "application/json");
   int httpCode = http.POST(body);
+  noteHttpCode(httpCode);
   http.end();
 
   if (httpCode == 200) {
@@ -78,6 +100,7 @@ bool BackendClient::sendHeartbeat(const String &hardwareId) {
   http.begin(baseUrl_ + "/api/v1/device/heartbeat");
   http.addHeader("Content-Type", "application/json");
   int httpCode = http.POST(body);
+  noteHttpCode(httpCode);
   http.end();
 
   return httpCode == 200;
@@ -97,6 +120,7 @@ bool BackendClient::sendTelemetry(const String &hardwareId, float temperatureC,
   http.begin(baseUrl_ + "/api/v1/device/telemetry");
   http.addHeader("Content-Type", "application/json");
   int httpCode = http.POST(body);
+  noteHttpCode(httpCode);
   http.end();
 
   return httpCode == 201; // backend returns 201 Created for telemetry
@@ -108,6 +132,7 @@ CommandFetchResult BackendClient::getNextCommand(const String &hardwareId,
   http.setTimeout(kHttpTimeoutMs);
   http.begin(baseUrl_ + "/api/v1/device/commands/next?hardware_id=" + hardwareId);
   int httpCode = http.GET();
+  noteHttpCode(httpCode);
 
   if (httpCode != 200) {
     http.end();
@@ -165,6 +190,7 @@ bool BackendClient::submitCommandResult(long commandId, CommandResultStatus stat
   http.begin(baseUrl_ + "/api/v1/device/commands/" + String(commandId) + "/result");
   http.addHeader("Content-Type", "application/json");
   int httpCode = http.POST(body);
+  noteHttpCode(httpCode);
   http.end();
 
   // 200 = acked; 409 = already resolved -- treat as handled, not an error
