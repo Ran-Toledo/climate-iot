@@ -3,7 +3,7 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 import { listDevices } from "../api/devices";
 import type { Device } from "../api/types";
-import { AppIcon, ChevronDownIcon, DropletIcon, PowerIcon } from "../components/icons";
+import { AppIcon, ChevronDownIcon, DropletIcon, GearIcon, PowerIcon } from "../components/icons";
 import { ErrorBanner } from "../components/ErrorBanner";
 import { Skeleton } from "../components/Skeleton";
 import { Sparkline } from "../components/Sparkline";
@@ -48,6 +48,13 @@ export function DeviceListPage() {
       <div className="flex items-center gap-2">
         <AppIcon className="h-7 w-7" />
         <span className="text-sm font-semibold text-ink-2">Climate IoT</span>
+        <Link
+          to="/settings"
+          aria-label="Settings"
+          className="-mr-2 ml-auto flex h-11 w-11 items-center justify-center text-ink-2 no-underline"
+        >
+          <GearIcon />
+        </Link>
       </div>
       <h1 className="mt-3 mb-0 text-2xl font-semibold tracking-tight">Devices</h1>
 

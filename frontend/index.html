@@ -11,6 +11,21 @@
     <meta name="theme-color" content="#f9f9f7" media="(prefers-color-scheme: light)" />
     <meta name="theme-color" content="#121315" media="(prefers-color-scheme: dark)" />
     <meta name="apple-mobile-web-app-title" content="Climate IoT" />
+    <!-- Screen mode before first paint, so dark mode never flashes light.
+         Same storage key and colours as src/lib/theme.ts. -->
+    <script>
+      (function () {
+        var pref = null;
+        try { pref = localStorage.getItem("climate-iot:theme"); } catch (e) {}
+        var dark = pref === "dark" || (pref !== "light" && matchMedia("(prefers-color-scheme: dark)").matches);
+        document.documentElement.dataset.theme = dark ? "dark" : "light";
+        if (pref === "light" || pref === "dark") {
+          document.querySelectorAll('meta[name="theme-color"]').forEach(function (m) {
+            m.content = dark ? "#121315" : "#f9f9f7";
+          });
+        }
+      })();
+    </script>
     <title>Climate IoT</title>
   </head>
   <body>

@@ -4,6 +4,7 @@ import { createRoot } from "react-dom/client";
 import { BrowserRouter } from "react-router-dom";
 import App from "./App.tsx";
 import "./index.css";
+import "./lib/theme"; // applies the saved screen mode and follows OS changes
 
 const queryClient = new QueryClient();
 
