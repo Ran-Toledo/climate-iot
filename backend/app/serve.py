@@ -1,10 +1,11 @@
 """Runs the API's two listeners in one process (`python -m app.serve`).
 
-- Device listener, APP_PORT: app.main.device_app (only /api/v1/device/*).
-  docker-compose.yml publishes this one on the LAN for the ESP32.
-- Internal listener, INTERNAL_API_PORT (default 8001): app.main.app, the
-  full API. Not published; the frontend's nginx proxies to it over the
-  Docker network.
+- API listener, API_PORT (default 8000): app.main.app, the full API. The
+  frontend's nginx proxies to it over the Docker network; docker-compose.yml
+  publishes it on 127.0.0.1 only, for /docs and debugging.
+- Device listener, DEVICE_API_PORT (default 8001): app.main.device_app
+  (only /api/v1/device/*). docker-compose.yml publishes this one on the LAN
+  for the ESP32.
 
 Both run on one event loop and share one database engine, so SQLite keeps
 a single writer process. If either listener stops (a signal, or a failed
@@ -37,10 +38,10 @@ class _Server(uvicorn.Server):
 
 async def main() -> None:
     host = os.environ.get("APP_HOST", "0.0.0.0")
-    device_port = int(os.environ.get("APP_PORT", "8000"))
-    internal_port = int(os.environ.get("INTERNAL_API_PORT", "8001"))
+    internal_port = int(os.environ.get("API_PORT", "8000"))
+    device_port = int(os.environ.get("DEVICE_API_PORT", "8001"))
     if device_port == internal_port:
-        raise SystemExit("APP_PORT and INTERNAL_API_PORT must differ")
+        raise SystemExit("API_PORT and DEVICE_API_PORT must differ")
 
     servers = [
         _Server(uvicorn.Config(device_app, host=host, port=device_port)),
@@ -67,7 +68,7 @@ async def main() -> None:
 
     warn_if_device_key_missing()
     logger.info(
-        "Device listener on %s:%d (device API only); internal listener on %s:%d (full API)",
+        "Device listener on %s:%d (device API only); API listener on %s:%d (full API)",
         host, device_port, host, internal_port,
     )
 

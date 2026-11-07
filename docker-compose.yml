@@ -1,28 +1,34 @@
+name: climate-iot
+
+# Ports: host 3030 (web) / 8030 (api), set in .env, plus the device API on
+# 8080 for the ESP32. Inside the containers the web listens on 3000, the
+# full API on 8000 and the device API on 8001.
 services:
   api:
     build: ./backend
     environment:
       APP_HOST: ${APP_HOST}
-      APP_PORT: ${APP_PORT}
       DATABASE_URL: ${DATABASE_URL}
       CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS}
-      INTERNAL_API_PORT: ${INTERNAL_API_PORT:-8001}
+      API_PORT: ${API_PORT:-8000}
+      DEVICE_API_PORT: ${DEVICE_API_PORT:-8001}
       # Shared secret every /api/v1/device/* request must send as
       # X-Device-Key. Unset = those routes answer 503 (fail closed).
       DEVICE_API_KEY: ${DEVICE_API_KEY:-}
     # One process, two listeners (backend/app/serve.py):
-    # - APP_PORT: device API only (/api/v1/device/*; everything else 404,
-    #   no docs). Published on every interface so the ESP32 can reach it
+    # - DEVICE_API_PORT: device API only (/api/v1/device/*; everything else
+    #   404, no docs). Published on every interface so the ESP32 can reach it
     #   over Wi-Fi.
-    # - INTERNAL_API_PORT: the full API (management, docs). Not published;
-    #   only the frontend reaches it, over the Docker network.
+    # - API_PORT: the full API (management, docs). The web container reaches
+    #   it over the Docker network; published on 127.0.0.1 only, for /docs
+    #   and debugging from this machine.
     ports:
-      - "${API_HOST_PORT:-8000}:${APP_PORT:-8000}"
-      # Uncomment to reach the full API (e.g. /docs) from this machine only:
-      # - "127.0.0.1:${INTERNAL_API_HOST_PORT:-8001}:${INTERNAL_API_PORT:-8001}"
+      - "${DEVICE_API_HOST_PORT:-8080}:${DEVICE_API_PORT:-8001}"
+      - "127.0.0.1:${API_HOST_PORT:-8030}:${API_PORT:-8000}"
     # The SQLite database file lives here (DATABASE_URL points into /data).
+    # Bind mount: visible and backed up outside Docker (see backup-db.ps1).
     volumes:
-      - api_data:/data
+      - ./data:/data
 
   device-simulator:
     build: ./device-simulator
@@ -46,22 +52,19 @@ services:
     depends_on:
       - api
 
-  frontend:
+  web:
     build: ./frontend
     environment:
-      FRONTEND_PORT: ${FRONTEND_PORT:-4173}
-      # nginx in the frontend container serves the SPA and forwards /api,
-      # /docs etc. to the api's internal (full) listener (see
+      WEB_PORT: ${WEB_PORT:-3000}
+      # nginx in the web container serves the SPA and forwards /api,
+      # /docs etc. to the api's full listener (see
       # frontend/nginx/default.conf.template). The browser only ever talks
-      # to the frontend.
-      API_PROXY_TARGET: http://api:${INTERNAL_API_PORT:-8001}
+      # to the web container.
+      API_PROXY_TARGET: http://api:${API_PORT:-8000}
     # Published on 127.0.0.1 only, so it isn't reachable over Wi-Fi/LAN or a
     # plain-HTTP tailnet IP. Other devices use `tailscale serve`'s HTTPS
     # address, which proxies to this localhost port (see README).
     ports:
-      - "127.0.0.1:${FRONTEND_HOST_PORT:-5173}:${FRONTEND_PORT:-4173}"
+      - "127.0.0.1:${WEB_HOST_PORT:-3030}:${WEB_PORT:-3000}"
     depends_on:
       - api
-
-volumes:
-  api_data:

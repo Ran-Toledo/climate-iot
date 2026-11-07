@@ -4,3 +4,10 @@ __pycache__/
 venv/
 .env
 .env.local
+
+# SQLite data (bind-mounted into the api container) and local backups
+data/
+backups/
+*.db
+*.db-shm
+*.db-wal

@@ -1,6 +1,6 @@
 # Rendered at container start by the nginx image's entrypoint, which runs
 # envsubst on /etc/nginx/templates/*.template into /etc/nginx/conf.d/.
-# Only ${FRONTEND_PORT} and ${API_PROXY_TARGET} are substituted (see
+# Only ${WEB_PORT} and ${API_PROXY_TARGET} are substituted (see
 # NGINX_ENVSUBST_FILTER in the Dockerfile); nginx's own $variables are
 # left alone.
 
@@ -14,13 +14,13 @@ resolver 127.0.0.11 valid=10s ipv6=off;
 # (anti DNS-rebinding): localhost, bare IPs, and Tailscale MagicDNS names
 # (`tailscale serve` forwards *.ts.net as the Host). Anything else gets 403.
 server {
-    listen ${FRONTEND_PORT} default_server;
+    listen ${WEB_PORT} default_server;
     server_name _;
     return 403;
 }
 
 server {
-    listen ${FRONTEND_PORT};
+    listen ${WEB_PORT};
     server_name localhost
                 ~^\d+\.\d+\.\d+\.\d+$
                 ~^\[[0-9a-fA-F:.]+\]$

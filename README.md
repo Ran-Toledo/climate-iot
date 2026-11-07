@@ -9,21 +9,23 @@ firmware requires no API changes.
 ## Architecture
 
 ```
-Browser --HTTPS (tailscale serve)--> frontend proxy --> api :8001 (full API) --+
-ESP32 --HTTP :8080 + X-Device-Key -------------------> api :8000 (device API) --+--> SQLite file
-Device Simulator (inside Docker) + X-Device-Key -----> api :8000 (device API) --+
+Browser --HTTPS (tailscale serve)--> web proxy --> api API_PORT (full API) -----------+
+ESP32 --HTTP DEVICE_API_HOST_PORT + X-Device-Key --> api DEVICE_API_PORT (device API) --+--> SQLite file
+Device Simulator (inside Docker) + X-Device-Key ---> api DEVICE_API_PORT (device API) --+
 ```
 
 The `api` container is one process with two listeners
-(`backend/app/serve.py`). The **device listener** (`APP_PORT`, published on
-the LAN as `API_HOST_PORT`) serves only `/api/v1/device/*`: anything else
-is a 404, with no docs or OpenAPI schema. The **internal listener**
-(`INTERNAL_API_PORT`, default 8001) serves the full API and isn't
-published; only the frontend's proxy reaches it. Every device route also
-needs the shared `X-Device-Key` header (see "Device key" below).
+(`backend/app/serve.py`). The **device listener** (`DEVICE_API_PORT`,
+published on the LAN as `DEVICE_API_HOST_PORT`) serves only
+`/api/v1/device/*`: anything else is a 404, with no docs or OpenAPI schema.
+The **API listener** (`API_PORT`) serves the full API; the web container's
+proxy reaches it over the Docker network, and it's published on
+`127.0.0.1` only (as `API_HOST_PORT`) for `/docs` and debugging. Every
+device route also needs the shared `X-Device-Key` header (see "Device key"
+below).
 
-The database is a SQLite file inside the `api` container's `/data` volume,
-so nothing else can reach it. See "Network access" below for who can reach
+The database is a SQLite file in `./data`, bind-mounted into the `api`
+container at `/data`, with no port of its own. See "Network access" below for who can reach
 what.
 
 The core idea is that a device has two independent states:
@@ -51,10 +53,10 @@ docker compose up --build -d
 docker compose ps
 ```
 
-Two services (`api`, `frontend`) should show as running. The frontend is
-published on
-`127.0.0.1:${FRONTEND_HOST_PORT}` (default `5173`) and the device API on
-`${API_HOST_PORT}` (default `8000`) on every interface. Set
+Two services (`api`, `web`) should show as running. The web app is
+published on `127.0.0.1:<WEB_HOST_PORT>`, the full API on
+`127.0.0.1:<API_HOST_PORT>`, and the device API on `<DEVICE_API_HOST_PORT>`
+on every interface (all set in `.env`). Set
 `DEVICE_API_KEY` in `.env` first (see "Device key"), or every device
 request gets a 503.
 If a port is already taken on your machine, change it in `.env` and re-run
@@ -73,13 +75,12 @@ without typing the flag, add `COMPOSE_PROFILES=simulator` to `.env` instead.
 
 The database schema is applied automatically: the `api` container runs
 `alembic upgrade head` on every start (a no-op when already current), so a
-fresh volume needs no manual step.
+fresh `./data` folder needs no manual step.
 
-Check the API is up (through the frontend's proxy, the only way in from
-this machine):
+Check the API is up (through the web container's proxy):
 
 ```
-curl http://localhost:5173/health
+curl http://localhost:<WEB_HOST_PORT>/health
 ```
 
 ## Device key
@@ -108,20 +109,20 @@ traffic can read it.
 
 ## Explore the API
 
-FastAPI generates interactive docs automatically. The frontend proxies
-them along with the API:
+FastAPI generates interactive docs automatically, on the API port and
+also through the web container's proxy:
 
-- Swagger UI (try requests from the browser): http://localhost:5173/docs
-- ReDoc (read-only reference): http://localhost:5173/redoc
+- Swagger UI (try requests from the browser): `http://localhost:<API_HOST_PORT>/docs`
+- ReDoc (read-only reference): `http://localhost:<API_HOST_PORT>/redoc`
 
 ## Frontend
 
 A small React SPA (device list, device detail with desired/reported state
 and controls, a temperature/humidity graph) lives in `frontend/` and is
-already part of `docker compose up` above as the `frontend` service —
-open http://localhost:5173 (or your `FRONTEND_HOST_PORT`) once it's up.
+already part of `docker compose up` above as the `web` service —
+open `http://localhost:<WEB_HOST_PORT>` once it's up.
 
-The frontend container is nginx: it serves the built SPA and proxies
+The web container is nginx: it serves the built SPA and proxies
 `/api`, `/health`, `/docs`, `/redoc` and `/openapi.json` to the `api`
 container (see `frontend/nginx/default.conf.template`; `npm run dev` does
 the same through `frontend/vite.config.ts`). The SPA calls the API with
@@ -135,20 +136,22 @@ change, run it outside Docker instead — see `frontend/README.md`.
 
 | Who | Address | Reaches |
 |---|---|---|
-| This machine | `http://localhost:5173` | Frontend, with the full API (and `/docs`) behind its proxy |
-| Other tailnet devices | `https://<this-pc>.<tailnet>.ts.net:9443` | The same, over HTTPS via `tailscale serve` |
-| ESP32 and anything else on the LAN or tailnet | `http://<lan-ip>:${API_HOST_PORT}` | The device API only, with `X-Device-Key` |
-| Device simulator | `http://api:8000` | The device API only, inside the Docker network, with `X-Device-Key` |
-| Frontend proxy | `http://api:8001` | The full API, inside the Docker network |
+| This machine | `http://localhost:<WEB_HOST_PORT>` | Web app, with the full API (and `/docs`) behind its proxy |
+| This machine | `http://localhost:<API_HOST_PORT>` | The full API directly (and `/docs`) |
+| Other tailnet devices | `https://<this-pc>.<tailnet>.ts.net:9443` | The web app, over HTTPS via `tailscale serve` |
+| ESP32 and anything else on the LAN or tailnet | `http://<lan-ip>:<DEVICE_API_HOST_PORT>` | The device API only, with `X-Device-Key` |
+| Device simulator | `http://api:<DEVICE_API_PORT>` | The device API only, inside the Docker network, with `X-Device-Key` |
+| Web proxy | `http://api:<API_PORT>` | The full API, inside the Docker network |
 
 In particular:
 
-- **The frontend is published on `127.0.0.1` only**, so it isn't reachable
-  over Wi-Fi/LAN or on the plain-HTTP tailnet IP. Use the HTTPS address.
+- **The web app and the full API are published on `127.0.0.1` only**, so
+  they aren't reachable over Wi-Fi/LAN or on the plain-HTTP tailnet IP.
+  Use the HTTPS address.
 - **Only the device API is published on every interface**, so the ESP32
   can reach it over Wi-Fi. The management API and docs are reachable only
-  through the frontend. In `esp32-climate-device/include/secrets.h`, set
-  `BACKEND_BASE_URL` to `http://<this machine's LAN IP>:<API_HOST_PORT>`
+  from this machine. In `esp32-climate-device/include/secrets.h`, set
+  `BACKEND_BASE_URL` to `http://<this machine's LAN IP>:<DEVICE_API_HOST_PORT>`
   and `BACKEND_HOSTNAME` to this machine's name (lowercase, no
   `.local`). The ESP32 looks the backend up in this order: mDNS
   (`<BACKEND_HOSTNAME>.local`, accepted only on its own subnet), then the
@@ -157,20 +160,22 @@ In particular:
   resolves at boot and again after 3 consecutive connection failures;
   serial lines starting `[backend]` show which source it used. Also set
   `DEVICE_API_KEY` there (see "Device key").
-- **The database is a SQLite file** in the `api` container's `/data`
-  volume, with no port at all. For a SQL shell, use
-  `docker compose exec api python -m sqlite3 /data/climate_iot.db`.
+- **The database is a SQLite file** in `./data` (bind-mounted at `/data`),
+  with no port at all. For a SQL shell, use
+  `docker compose exec api python -m sqlite3 /data/climate_iot.db`. Don't
+  open `data\climate_iot.db` in another tool while the stack is running;
+  open a backup instead.
 
 **HTTPS over [Tailscale](https://tailscale.com).** `tailscale serve` runs on
 the host, outside Docker, and forwards a tailnet-only HTTPS port to the
-frontend's localhost port. Set it up once (it survives reboots):
+web container's localhost port. Set it up once (it survives reboots),
+with your `WEB_HOST_PORT`:
 
 ```
-tailscale serve --bg --https=9443 http://127.0.0.1:5173
+tailscale serve --bg --https=9443 http://127.0.0.1:<WEB_HOST_PORT>
 ```
 
-Use your `FRONTEND_HOST_PORT` in place of `5173`, and any HTTPS port not
-already in use (`tailscale serve status` lists them). Then open
+Any HTTPS port not already in use works (`tailscale serve status` lists them). Then open
 `https://<this-pc>.<tailnet>.ts.net:9443` on a device with Tailscale
 connected. Tailscale issues the certificate itself, but the tailnet needs
 MagicDNS and HTTPS certificates turned on in the admin console. To remove
@@ -192,14 +197,14 @@ a few seconds.
 **1. Confirm the simulated device registered itself**
 
 ```
-curl -s http://localhost:5173/api/v1/management/devices | python -m json.tool
+curl -s http://localhost:<API_HOST_PORT>/api/v1/management/devices | python -m json.tool
 ```
 
 You should see one device, `sim-bedroom-001`, `online: true`. The list view
 doesn't include state — check the detail view for that:
 
 ```
-curl -s http://localhost:5173/api/v1/management/devices/1 | python -m json.tool
+curl -s http://localhost:<API_HOST_PORT>/api/v1/management/devices/1 | python -m json.tool
 ```
 
 `device_state` starts with empty `desired_state`/`reported_state` — the
@@ -209,7 +214,7 @@ simulator internally has its own default settings.
 **2. Push a command via the management API**
 
 ```
-curl -s -X POST http://localhost:5173/api/v1/management/devices/1/commands \
+curl -s -X POST http://localhost:<API_HOST_PORT>/api/v1/management/devices/1/commands \
   -H "Content-Type: application/json" \
   -d '{"payload":{"power":true,"target_temperature":22}}' | python -m json.tool
 ```
@@ -220,7 +225,7 @@ the response (e.g. `"id": 1`).
 **3. Verify the command was executed**
 
 ```
-curl -s http://localhost:5173/api/v1/management/commands/1 | python -m json.tool
+curl -s http://localhost:<API_HOST_PORT>/api/v1/management/commands/1 | python -m json.tool
 ```
 
 Within one simulator poll cycle (a few seconds, `COMMAND_POLL_INTERVAL_SECONDS`
@@ -230,7 +235,7 @@ state.
 **4. Confirm desired and reported state now agree**
 
 ```
-curl -s http://localhost:5173/api/v1/management/devices/1 | python -m json.tool
+curl -s http://localhost:<API_HOST_PORT>/api/v1/management/devices/1 | python -m json.tool
 ```
 
 `desired_state` and `reported_state` should both show
@@ -283,9 +288,9 @@ source. Key ones:
 |---|---|
 | `DATABASE_URL` | SQLAlchemy URL used by the API and Alembic (`sqlite+aiosqlite:////data/climate_iot.db`) |
 | `CORS_ALLOWED_ORIGINS` | Comma-separated browser origins allowed to call the API cross-origin. Normally empty, since browsers reach the API through the frontend's proxy on the same origin |
-| `FRONTEND_HOST_PORT` | Port the frontend is published on, on `127.0.0.1` only (container always listens on `FRONTEND_PORT`) |
-| `API_HOST_PORT` | Host port the device listener is published on, on every interface (the container listens on `APP_PORT`) |
-| `INTERNAL_API_PORT` | Port of the full-API listener inside the Docker network (default `8001`, not published; must differ from `APP_PORT`) |
+| `WEB_PORT` / `WEB_HOST_PORT` | Port nginx listens on inside the web container / host port it's published on, `127.0.0.1` only |
+| `API_PORT` / `API_HOST_PORT` | Full-API listener inside the api container / host port it's published on, `127.0.0.1` only |
+| `DEVICE_API_PORT` / `DEVICE_API_HOST_PORT` | Device-API listener inside the api container (must differ from `API_PORT`) / host port it's published on, every interface |
 | `DEVICE_API_KEY` | Shared secret for `X-Device-Key`; used by the api, the simulator and (via `secrets.h`) the ESP32. Unset = device API answers 503 |
 | `DEVICE_HARDWARE_ID` / `DEVICE_NAME` | Identity the simulator registers as |
 | `HEARTBEAT_INTERVAL_SECONDS` / `TELEMETRY_INTERVAL_SECONDS` / `COMMAND_POLL_INTERVAL_SECONDS` | Simulator loop cadence |
@@ -303,9 +308,17 @@ docker run --rm -v "$PWD/backend:/src:ro" -w /src python:3.13-slim   sh -c "pip 
 ## Stopping / resetting
 
 ```
-docker compose down        # stop containers, keep data
-docker compose down -v     # stop containers and wipe the database volume
+docker compose down        # stop containers; data in ./data is kept
 ```
+
+To start over with an empty database, run `.\backup-db.ps1` first, stop the
+stack, then move the `data` folder elsewhere.
+
+## Backups
+
+`.\backup-db.ps1` (with the stack running) writes a consistent copy of the
+database to `backups\` (untracked), using SQLite's online backup so
+writes in progress are included.
 
 ## Out of scope (by design)
 

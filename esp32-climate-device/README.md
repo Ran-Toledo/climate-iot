@@ -145,7 +145,7 @@ recur:
 - **Backend unreachable from the ESP32.** `localhost`/`127.0.0.1` in
   `secrets.h` means the ESP32 itself, never your computer — use your
   computer's LAN IP. Also double-check the port: `docker-compose.yml`
-  maps `API_HOST_PORT` (from the root `.env`) to the container's port,
+  maps `DEVICE_API_HOST_PORT` (from the root `.env`) to the container's port,
   and those aren't always the same value. The `[backend] using … (source:
   …)` serial line shows which address the firmware picked (mDNS, the
   saved NVS address, or `BACKEND_BASE_URL`).
@@ -354,7 +354,7 @@ lib/
    backend's URL.
 3. **The ESP32 cannot reach `localhost`** — that means the device itself,
    not your computer. Find your computer's LAN IP (`ipconfig` on
-   Windows) and use `http://<that-ip>:8000` as `BACKEND_BASE_URL`. Make
+   Windows) and use `http://<that-ip>:<DEVICE_API_HOST_PORT>` as `BACKEND_BASE_URL`. Make
    sure the backend is listening on `0.0.0.0`, not `127.0.0.1`, so it
    accepts connections from other devices on the network — check how
    it's started/configured (e.g. uvicorn's `--host` flag or equivalent)
@@ -386,7 +386,7 @@ Expected serial output on a successful boot:
 Hardware ID: esp32-a1b2c3d4e5f6
 Wi-Fi connecting to <your-ssid>...
 Wi-Fi connected, IP: 192.168.1.123
-Registering with backend (http://192.168.1.50:8000)...
+Registering with backend (http://192.168.1.50:<DEVICE_API_HOST_PORT>)...
 Registered with backend.
 ```
 

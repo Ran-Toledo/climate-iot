@@ -1,6 +1,6 @@
 import os
 
-API_BASE_URL = os.environ.get("API_BASE_URL", "http://api:8000")
+API_BASE_URL = os.environ.get("API_BASE_URL", "http://api:8001")
 HARDWARE_ID = os.environ.get("DEVICE_HARDWARE_ID", "sim-bedroom-001")
 DEVICE_NAME = os.environ.get("DEVICE_NAME")
 # Sent as X-Device-Key on every request; must match the api's
