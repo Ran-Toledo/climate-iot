@@ -57,6 +57,8 @@ async def command_loop(client: ApiClient, simulator: Simulator) -> None:
 
 
 async def main() -> None:
+    if not config.DEVICE_API_KEY:
+        logger.warning("DEVICE_API_KEY is not set; the api will reject every request (401/503)")
     client = ApiClient()
     simulator = Simulator()
 

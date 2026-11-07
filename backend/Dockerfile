@@ -17,4 +17,4 @@ RUN mkdir -p /data
 
 # Apply migrations on every start (a no-op when already current), so a fresh
 # volume gets its schema without a manual step.
-CMD python -m alembic upgrade head && uvicorn app.main:app --host $APP_HOST --port $APP_PORT
+CMD python -m alembic upgrade head && exec python -m app.serve

@@ -7,6 +7,7 @@ namespace {
 constexpr unsigned long kInitialBackoffMs = 3000;
 constexpr unsigned long kMaxBackoffMs = 30000;
 constexpr int kHttpTimeoutMs = 5000; // matches the simulator's fixed 5s timeout
+constexpr unsigned long kAuthWarningIntervalMs = 60000;
 
 // +/-20% jitter so a fleet of devices that all lost the backend at the
 // same moment (e.g. it was restarting) don't all retry in lockstep.
@@ -20,12 +21,15 @@ unsigned long jitteredBackoff(unsigned long backoffMs) {
 }
 }  // namespace
 
-BackendClient::BackendClient(const String &baseUrl)
+BackendClient::BackendClient(const String &baseUrl, const String &deviceKey)
     : baseUrl_(baseUrl),
+      deviceKey_(deviceKey),
       registered_(false),
       nextAttemptMs_(0),
       backoffMs_(kInitialBackoffMs),
-      consecutiveFailures_(0) {}
+      consecutiveFailures_(0),
+      lastAuthWarningMs_(0),
+      authWarned_(false) {}
 
 bool BackendClient::isRegistered() const { return registered_; }
 
@@ -43,6 +47,21 @@ void BackendClient::noteHttpCode(int httpCode) {
     consecutiveFailures_++;
   } else {
     consecutiveFailures_ = 0;
+  }
+
+  // 401/503 won't fix themselves by retrying: say why, at most once a
+  // minute. The key itself is never printed.
+  if (httpCode == 401 || httpCode == 503) {
+    unsigned long now = millis();
+    if (!authWarned_ || now - lastAuthWarningMs_ >= kAuthWarningIntervalMs) {
+      authWarned_ = true;
+      lastAuthWarningMs_ = now;
+      Serial.println(httpCode == 401
+                         ? "Backend rejected the device key (HTTP 401): DEVICE_API_KEY in "
+                           "secrets.h must match DEVICE_API_KEY in the backend's .env."
+                         : "Backend has no device key configured (HTTP 503): set "
+                           "DEVICE_API_KEY in the backend's .env and restart it.");
+    }
   }
 }
 
@@ -68,6 +87,7 @@ void BackendClient::update(unsigned long nowMs, const String &hardwareId, const 
   HTTPClient http;
   http.setTimeout(kHttpTimeoutMs);
   http.begin(baseUrl_ + "/api/v1/device/register");
+  http.addHeader("X-Device-Key", deviceKey_);
   http.addHeader("Content-Type", "application/json");
   int httpCode = http.POST(body);
   noteHttpCode(httpCode);
@@ -98,6 +118,7 @@ bool BackendClient::sendHeartbeat(const String &hardwareId) {
   HTTPClient http;
   http.setTimeout(kHttpTimeoutMs);
   http.begin(baseUrl_ + "/api/v1/device/heartbeat");
+  http.addHeader("X-Device-Key", deviceKey_);
   http.addHeader("Content-Type", "application/json");
   int httpCode = http.POST(body);
   noteHttpCode(httpCode);
@@ -118,6 +139,7 @@ bool BackendClient::sendTelemetry(const String &hardwareId, float temperatureC,
   HTTPClient http;
   http.setTimeout(kHttpTimeoutMs);
   http.begin(baseUrl_ + "/api/v1/device/telemetry");
+  http.addHeader("X-Device-Key", deviceKey_);
   http.addHeader("Content-Type", "application/json");
   int httpCode = http.POST(body);
   noteHttpCode(httpCode);
@@ -131,6 +153,7 @@ CommandFetchResult BackendClient::getNextCommand(const String &hardwareId,
   HTTPClient http;
   http.setTimeout(kHttpTimeoutMs);
   http.begin(baseUrl_ + "/api/v1/device/commands/next?hardware_id=" + hardwareId);
+  http.addHeader("X-Device-Key", deviceKey_);
   int httpCode = http.GET();
   noteHttpCode(httpCode);
 
@@ -188,6 +211,7 @@ bool BackendClient::submitCommandResult(long commandId, CommandResultStatus stat
   HTTPClient http;
   http.setTimeout(kHttpTimeoutMs);
   http.begin(baseUrl_ + "/api/v1/device/commands/" + String(commandId) + "/result");
+  http.addHeader("X-Device-Key", deviceKey_);
   http.addHeader("Content-Type", "application/json");
   int httpCode = http.POST(body);
   noteHttpCode(httpCode);

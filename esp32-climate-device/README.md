@@ -335,7 +335,8 @@ corresponding captured command. No dependency changes.
 
 Adds Wi-Fi connectivity and backend registration, implemented exactly per
 the discovered contract (`POST /api/v1/device/register
-{hardware_id, device_type, name}`, no auth). No telemetry/heartbeat/
+{hardware_id, device_type, name}`, no auth at the time; every request now
+also sends `X-Device-Key`, see the root README). No telemetry/heartbeat/
 commands yet — that's Stage 6.
 
 ```
@@ -358,7 +359,9 @@ lib/
    accepts connections from other devices on the network — check how
    it's started/configured (e.g. uvicorn's `--host` flag or equivalent)
    if unsure.
-   Also set `BACKEND_HOSTNAME` to your computer's name (lowercase, no
+   Set `DEVICE_API_KEY` to the same value as `DEVICE_API_KEY` in the
+   backend's `.env` (the build fails without it; the backend answers 401
+   to a wrong one). Also set `BACKEND_HOSTNAME` to your computer's name (lowercase, no
    `.local`): the firmware prefers finding the backend over mDNS and
    falls back to `BACKEND_BASE_URL` (see the troubleshooting notes).
 4. `include/secrets.h` is gitignored — it will never be committed.
@@ -545,8 +548,9 @@ user during implementation):
 - **IR reception in production** — dropped after Stage 3. The backend has
   no endpoint for a device to report AC state detected from a physical
   remote, so a receiver would have nothing to feed.
-- **Registration token persistence (Preferences/NVS)** — not implemented
-  because the backend has no auth/token concept to persist.
+- **Registration token persistence (Preferences/NVS)** — not needed: the
+  device authenticates with a fixed shared key (`DEVICE_API_KEY` in
+  `secrets.h`, sent as `X-Device-Key`), not an issued token.
 - **Guaranteed exactly-once command delivery** — dedup (hardened this
   stage) eliminates the transmit-twice risk for the failure mode that was
   identified (ack POST fails after a successful transmission). A more

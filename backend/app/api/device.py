@@ -6,9 +6,17 @@ from app.models import CommandStatus, Device
 from app.schemas.command import CommandOut, CommandResultIn
 from app.schemas.device import DeviceHeartbeatRequest, DeviceOut, DeviceRegisterRequest
 from app.schemas.telemetry import TelemetryIn
+from app.security import require_device_key
 from app.services import command_service, device_service, telemetry_service
 
-router = APIRouter(prefix="/api/v1/device", tags=["device"])
+# Every device route needs the X-Device-Key header (see app/security.py).
+# As a router dependency it runs before body validation, so an
+# unauthenticated caller gets 401, never a 422 describing the schema.
+router = APIRouter(
+    prefix="/api/v1/device",
+    tags=["device"],
+    dependencies=[Depends(require_device_key)],
+)
 
 
 async def _get_device_or_404(db: AsyncSession, hardware_id: str) -> Device:

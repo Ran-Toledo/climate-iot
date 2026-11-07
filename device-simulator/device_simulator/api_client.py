@@ -6,7 +6,8 @@ from device_simulator.models import Command
 
 class ApiClient:
     def __init__(self) -> None:
-        self._client = httpx.AsyncClient(base_url=config.API_BASE_URL, timeout=5.0)
+        headers = {"X-Device-Key": config.DEVICE_API_KEY} if config.DEVICE_API_KEY else {}
+        self._client = httpx.AsyncClient(base_url=config.API_BASE_URL, timeout=5.0, headers=headers)
 
     async def register(self) -> None:
         response = await self._client.post(

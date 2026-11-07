@@ -24,6 +24,13 @@
 // changes, the ESP32 still finds it without reflashing.
 #define BACKEND_HOSTNAME "your-computer-name"
 
+// Shared secret sent as the X-Device-Key header on every backend request.
+// Must be the exact value of DEVICE_API_KEY in the backend's .env
+// (generate one with:
+//   python -c "import secrets; print(secrets.token_urlsafe(32))"
+// ). Without the right key the backend answers 401.
+#define DEVICE_API_KEY "paste-the-same-key-as-in-the-backend-env"
+
 // Optional human-readable name sent at registration. Leave as "" to omit
 // (the backend contract treats name as nullable).
 #define DEVICE_NAME "ESP32 Climate Device"

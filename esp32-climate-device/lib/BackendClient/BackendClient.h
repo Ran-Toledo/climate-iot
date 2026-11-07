@@ -20,10 +20,11 @@ enum class CommandResultStatus { Completed, Failed };
 
 // Thin client for the discovered device API contract — mirrors
 // device-simulator/device_simulator/api_client.py's ApiClient one method
-// at a time. No auth (the backend has none for this API).
+// at a time. Every request carries the X-Device-Key header (the backend
+// answers 401 without the right key).
 class BackendClient {
  public:
-  explicit BackendClient(const String &baseUrl);
+  BackendClient(const String &baseUrl, const String &deviceKey);
 
   // Registration: call every loop() once Wi-Fi is connected and not yet
   // registered. No-ops if already registered or the backoff interval
@@ -52,10 +53,13 @@ class BackendClient {
 
  private:
   String baseUrl_;
+  String deviceKey_;
   bool registered_;
   unsigned long nextAttemptMs_;
   unsigned long backoffMs_;
   int consecutiveFailures_;
+  unsigned long lastAuthWarningMs_;
+  bool authWarned_;
 
   void noteHttpCode(int httpCode);
 };

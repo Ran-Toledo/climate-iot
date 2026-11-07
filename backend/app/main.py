@@ -1,3 +1,12 @@
+"""Two ASGI apps over the same routers and database (see app/serve.py):
+
+- `app`: everything (management API, device API, /health, /docs). Served
+  on the internal port, which only the frontend's nginx reaches.
+- `device_app`: only /api/v1/device/*. Served on the port published to the
+  LAN for the ESP32; anything else is a 404, and there are no docs or
+  OpenAPI schema to read.
+"""
+
 import os
 
 from fastapi import FastAPI
@@ -24,3 +33,12 @@ app.include_router(management_router)
 @app.get("/health")
 async def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+device_app = FastAPI(
+    title="Climate IoT device API",
+    docs_url=None,
+    redoc_url=None,
+    openapi_url=None,
+)
+device_app.include_router(device_router)

@@ -9,10 +9,18 @@ firmware requires no API changes.
 ## Architecture
 
 ```
-Browser --HTTPS (tailscale serve)--> frontend proxy --+
-ESP32 / LAN / Tailscale --HTTP :8080 -----------------+--> FastAPI Backend --> SQLite file
-Device Simulator (inside Docker) ---------------------+
+Browser --HTTPS (tailscale serve)--> frontend proxy --> api :8001 (full API) --+
+ESP32 --HTTP :8080 + X-Device-Key -------------------> api :8000 (device API) --+--> SQLite file
+Device Simulator (inside Docker) + X-Device-Key -----> api :8000 (device API) --+
 ```
+
+The `api` container is one process with two listeners
+(`backend/app/serve.py`). The **device listener** (`APP_PORT`, published on
+the LAN as `API_HOST_PORT`) serves only `/api/v1/device/*`: anything else
+is a 404, with no docs or OpenAPI schema. The **internal listener**
+(`INTERNAL_API_PORT`, default 8001) serves the full API and isn't
+published; only the frontend's proxy reaches it. Every device route also
+needs the shared `X-Device-Key` header (see "Device key" below).
 
 The database is a SQLite file inside the `api` container's `/data` volume,
 so nothing else can reach it. See "Network access" below for who can reach
@@ -45,8 +53,10 @@ docker compose ps
 
 Two services (`api`, `frontend`) should show as running. The frontend is
 published on
-`127.0.0.1:${FRONTEND_HOST_PORT}` (default `5173`) and the API on
-`${API_HOST_PORT}` (default `8000`) on every interface.
+`127.0.0.1:${FRONTEND_HOST_PORT}` (default `5173`) and the device API on
+`${API_HOST_PORT}` (default `8000`) on every interface. Set
+`DEVICE_API_KEY` in `.env` first (see "Device key"), or every device
+request gets a 503.
 If a port is already taken on your machine, change it in `.env` and re-run
 `docker compose up -d`; no source changes needed.
 
@@ -71,6 +81,30 @@ this machine):
 ```
 curl http://localhost:5173/health
 ```
+
+## Device key
+
+Every `/api/v1/device/*` request must carry the header
+`X-Device-Key: <DEVICE_API_KEY>`. The api compares it in constant time
+(`hmac.compare_digest`) and answers **401** if it's missing or wrong. If
+`DEVICE_API_KEY` isn't set, the api logs a warning at startup and answers
+**503** to every device request (it fails closed). The key and the header
+are never logged.
+
+1. Generate a key:
+   ```
+   python -c "import secrets; print(secrets.token_urlsafe(32))"
+   ```
+2. Put it in `.env` as `DEVICE_API_KEY=...`. The simulator reads the same
+   variable, through `docker-compose.yml`.
+3. Put the same value in the ESP32's `include/secrets.h`:
+   `#define DEVICE_API_KEY "..."`. The firmware won't build without it.
+   Then rebuild and flash.
+4. `docker compose up -d` to restart the api with the key.
+
+The key is a shared secret on a plain-HTTP LAN: it keeps other devices on
+the network off the device API, but anyone who can sniff the Wi-Fi
+traffic can read it.
 
 ## Explore the API
 
@@ -101,18 +135,19 @@ change, run it outside Docker instead — see `frontend/README.md`.
 
 | Who | Address | Reaches |
 |---|---|---|
-| This machine | `http://localhost:5173`, `http://localhost:${API_HOST_PORT}` | Frontend (with the API behind its proxy), and the API directly |
+| This machine | `http://localhost:5173` | Frontend, with the full API (and `/docs`) behind its proxy |
 | Other tailnet devices | `https://<this-pc>.<tailnet>.ts.net:9443` | The same, over HTTPS via `tailscale serve` |
-| ESP32 and other devices on the same Wi-Fi | `http://<lan-ip>:${API_HOST_PORT}` | The API |
-| Tailnet devices, API directly | `http://<this-pc>.<tailnet>.ts.net:${API_HOST_PORT}` | The API |
-| Device simulator | `http://api:8000` | The API directly, inside the Docker network |
+| ESP32 and anything else on the LAN or tailnet | `http://<lan-ip>:${API_HOST_PORT}` | The device API only, with `X-Device-Key` |
+| Device simulator | `http://api:8000` | The device API only, inside the Docker network, with `X-Device-Key` |
+| Frontend proxy | `http://api:8001` | The full API, inside the Docker network |
 
 In particular:
 
 - **The frontend is published on `127.0.0.1` only**, so it isn't reachable
   over Wi-Fi/LAN or on the plain-HTTP tailnet IP. Use the HTTPS address.
-- **The API is published on every interface**, so the ESP32 can reach it
-  over Wi-Fi. In `esp32-climate-device/include/secrets.h`, set
+- **Only the device API is published on every interface**, so the ESP32
+  can reach it over Wi-Fi. The management API and docs are reachable only
+  through the frontend. In `esp32-climate-device/include/secrets.h`, set
   `BACKEND_BASE_URL` to `http://<this machine's LAN IP>:<API_HOST_PORT>`
   and `BACKEND_HOSTNAME` to this machine's name (lowercase, no
   `.local`). The ESP32 looks the backend up in this order: mDNS
@@ -120,7 +155,8 @@ In particular:
   last mDNS address it saved in flash (NVS), then the host in
   `BACKEND_BASE_URL`. The port always comes from `BACKEND_BASE_URL`. It
   resolves at boot and again after 3 consecutive connection failures;
-  serial lines starting `[backend]` show which source it used.
+  serial lines starting `[backend]` show which source it used. Also set
+  `DEVICE_API_KEY` there (see "Device key").
 - **The database is a SQLite file** in the `api` container's `/data`
   volume, with no port at all. For a SQL shell, use
   `docker compose exec api python -m sqlite3 /data/climate_iot.db`.
@@ -213,8 +249,9 @@ Ctrl+C to stop following logs.
 
 ## API reference
 
-**Device API** (called by the simulator / future ESP32 firmware; trusts
-`hardware_id` in the request body, no auth):
+**Device API** (called by the ESP32 and the simulator; every request needs
+`X-Device-Key`, then `hardware_id` in the request is trusted). Served on
+both listeners:
 
 | Method | Path | Body |
 |---|---|---|
@@ -224,7 +261,8 @@ Ctrl+C to stop following logs.
 | GET | `/api/v1/device/commands/next?hardware_id=...` | — |
 | POST | `/api/v1/device/commands/{id}/result` | `{status: completed\|failed, result?}` |
 
-**Management API** (called by an operator / future web frontend):
+**Management API** (called by the frontend; internal listener only, no
+auth):
 
 | Method | Path | Body |
 |---|---|---|
@@ -246,10 +284,21 @@ source. Key ones:
 | `DATABASE_URL` | SQLAlchemy URL used by the API and Alembic (`sqlite+aiosqlite:////data/climate_iot.db`) |
 | `CORS_ALLOWED_ORIGINS` | Comma-separated browser origins allowed to call the API cross-origin. Normally empty, since browsers reach the API through the frontend's proxy on the same origin |
 | `FRONTEND_HOST_PORT` | Port the frontend is published on, on `127.0.0.1` only (container always listens on `FRONTEND_PORT`) |
-| `API_HOST_PORT` | Host port the API is published on, on every interface (container always listens on `APP_PORT`) |
+| `API_HOST_PORT` | Host port the device listener is published on, on every interface (the container listens on `APP_PORT`) |
+| `INTERNAL_API_PORT` | Port of the full-API listener inside the Docker network (default `8001`, not published; must differ from `APP_PORT`) |
+| `DEVICE_API_KEY` | Shared secret for `X-Device-Key`; used by the api, the simulator and (via `secrets.h`) the ESP32. Unset = device API answers 503 |
 | `DEVICE_HARDWARE_ID` / `DEVICE_NAME` | Identity the simulator registers as |
 | `HEARTBEAT_INTERVAL_SECONDS` / `TELEMETRY_INTERVAL_SECONDS` / `COMMAND_POLL_INTERVAL_SECONDS` | Simulator loop cadence |
 | `AMBIENT_TEMPERATURE` / `STARTING_TEMPERATURE` / `TEMPERATURE_STEP` | Simulator's thermal model |
+
+## Tests
+
+The backend tests (device key, and which routes each listener serves) run
+in a throwaway container, so nothing needs to be installed locally:
+
+```
+docker run --rm -v "$PWD/backend:/src:ro" -w /src python:3.13-slim   sh -c "pip install -q -r requirements-dev.txt && python -m pytest -q -p no:cacheprovider"
+```
 
 ## Stopping / resetting
 
@@ -261,7 +310,8 @@ docker compose down -v     # stop containers and wipe the database volume
 ## Out of scope (by design)
 
 This is an interview-scope MVP, not production software. Deliberately not
-implemented: authentication, MQTT/Redis/message brokers, automation
+implemented: user authentication (the device API has only a shared
+device key), MQTT/Redis/message brokers, automation
 rules/schedules, command retry/timeout handling, multi-command batching, and
 server-side telemetry aggregation (min/avg/max) — `GET .../telemetry` returns
 raw readings; a consumer computes aggregates itself.

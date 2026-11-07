@@ -6,10 +6,20 @@ services:
       APP_PORT: ${APP_PORT}
       DATABASE_URL: ${DATABASE_URL}
       CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS}
-    # Published on every interface, so the ESP32 can reach it over Wi-Fi and
-    # other devices over the LAN or Tailscale.
+      INTERNAL_API_PORT: ${INTERNAL_API_PORT:-8001}
+      # Shared secret every /api/v1/device/* request must send as
+      # X-Device-Key. Unset = those routes answer 503 (fail closed).
+      DEVICE_API_KEY: ${DEVICE_API_KEY:-}
+    # One process, two listeners (backend/app/serve.py):
+    # - APP_PORT: device API only (/api/v1/device/*; everything else 404,
+    #   no docs). Published on every interface so the ESP32 can reach it
+    #   over Wi-Fi.
+    # - INTERNAL_API_PORT: the full API (management, docs). Not published;
+    #   only the frontend reaches it, over the Docker network.
     ports:
       - "${API_HOST_PORT:-8000}:${APP_PORT:-8000}"
+      # Uncomment to reach the full API (e.g. /docs) from this machine only:
+      # - "127.0.0.1:${INTERNAL_API_HOST_PORT:-8001}:${INTERNAL_API_PORT:-8001}"
     # The SQLite database file lives here (DATABASE_URL points into /data).
     volumes:
       - api_data:/data
@@ -22,7 +32,9 @@ services:
     profiles:
       - simulator
     environment:
+      # The device listener, like the ESP32 (but over the Docker network).
       API_BASE_URL: ${API_BASE_URL}
+      DEVICE_API_KEY: ${DEVICE_API_KEY:-}
       DEVICE_HARDWARE_ID: ${DEVICE_HARDWARE_ID}
       DEVICE_NAME: ${DEVICE_NAME}
       HEARTBEAT_INTERVAL_SECONDS: ${HEARTBEAT_INTERVAL_SECONDS}
@@ -39,9 +51,10 @@ services:
     environment:
       FRONTEND_PORT: ${FRONTEND_PORT:-4173}
       # nginx in the frontend container serves the SPA and forwards /api,
-      # /docs etc. here (see frontend/nginx/default.conf.template). The
-      # browser only ever talks to the frontend.
-      API_PROXY_TARGET: http://api:${APP_PORT:-8000}
+      # /docs etc. to the api's internal (full) listener (see
+      # frontend/nginx/default.conf.template). The browser only ever talks
+      # to the frontend.
+      API_PROXY_TARGET: http://api:${INTERNAL_API_PORT:-8001}
     # Published on 127.0.0.1 only, so it isn't reachable over Wi-Fi/LAN or a
     # plain-HTTP tailnet IP. Other devices use `tailscale serve`'s HTTPS
     # address, which proxies to this localhost port (see README).

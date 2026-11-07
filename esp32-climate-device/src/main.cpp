@@ -36,6 +36,12 @@
 #define BACKEND_HOSTNAME ""
 #endif
 
+// Shared secret sent as X-Device-Key on every backend request; must match
+// DEVICE_API_KEY in the backend's .env.
+#ifndef DEVICE_API_KEY
+#error "DEVICE_API_KEY is not defined in secrets.h; see include/secrets.example.h"
+#endif
+
 // Test builds (see the test-* envs in platformio.ini) swap in a hostname
 // that won't resolve, to exercise the fallbacks.
 #ifdef BACKEND_HOSTNAME_OVERRIDE
@@ -56,7 +62,7 @@ AcTransmitter acTransmitter(IR_SEND_PIN);
 AcDeviceState acState;
 
 WifiConnection wifi(WIFI_SSID, WIFI_PASSWORD);
-BackendClient backendClient(BACKEND_BASE_URL);
+BackendClient backendClient(BACKEND_BASE_URL, DEVICE_API_KEY);
 HeartbeatReporter heartbeatReporter(backendClient);
 TelemetryReporter telemetryReporter(backendClient);
 CommandProcessor commandProcessor(backendClient, acTransmitter, acState);
