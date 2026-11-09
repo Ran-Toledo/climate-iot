@@ -4,8 +4,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Command, CommandStatus, DeviceState
-from app.schemas.command import CommandResultIn
-from app.schemas.device_state import ClimateState
+from app.schemas.command import CommandResult, CommandResultIn
 
 
 async def get_next_pending_command(db: AsyncSession, device_id: int) -> Command | None:
@@ -23,8 +22,9 @@ async def get_command(db: AsyncSession, command_id: int) -> Command | None:
 
 
 async def apply_command_result(db: AsyncSession, command: Command, payload: CommandResultIn) -> Command:
+    reported = payload.result  # already validated by CommandResultIn
     command.status = payload.status
-    command.result = payload.result
+    command.result = reported.model_dump(exclude_none=True) if reported is not None else None
     command.completed_at = datetime.now(timezone.utc)
 
     if payload.status == CommandStatus.COMPLETED:
@@ -33,7 +33,7 @@ async def apply_command_result(db: AsyncSession, command: Command, payload: Comm
         )
         device_state = state_result.scalar_one()
 
-        reported = ClimateState.model_validate(payload.result or {})
+        reported = reported or CommandResult()
         merged = dict(device_state.reported_state)
         if reported.power is not None:
             merged["power"] = reported.power

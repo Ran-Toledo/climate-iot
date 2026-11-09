@@ -11,16 +11,12 @@ Deferred work noticed along the way, not currently blocking anything.
   (`management_service.create_command` /
   `command_service.apply_command_result`), command dedup semantics, and
   the telemetry window/bucketing in `telemetry_service`.
-- **Backend: `CommandCreate.type` is a plain `str`, not
-  `Literal["set_state"]`** (`backend/app/schemas/command.py`). The
-  backend will currently store a command with any `type` value even
-  though only `set_state` is ever handled — the ESP32 firmware
-  defensively rejects unknown types itself, but the backend doesn't stop
-  a bogus type from being created in the first place.
-- **Backend: `CommandResultIn.result` is an untyped `dict`**
-  (`backend/app/schemas/command.py`). Unlike the command payload, the
-  result isn't validated against `ClimateState` shape, so a malformed
-  result could get stored silently.
+- ~~Backend: validate commands~~ — done. `CommandCreate` takes only
+  `type: "set_state"` and a strict, closed payload (boolean `power`, whole
+  `target_temperature` 16–30, at least one field, no unknown keys), and
+  `CommandResultIn.result` is validated the same way, so a bad request is a
+  422 instead of a queued command or a 500 (`backend/app/schemas/command.py`,
+  tests in `backend/tests/test_command_validation.py`).
 - **Backend: no pagination on `GET /management/devices`**
   (`backend/app/api/management.py`). Fine at current scale (one real
   device), but worth revisiting if the device list grows.
