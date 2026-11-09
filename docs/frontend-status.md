@@ -112,7 +112,7 @@ each stage.
   "Both in agreement" vs. "Syncing" computed by comparing the two
   `ClimateState` objects field-by-field, same logic already used for the
   list's syncing badge), a controls card (power toggle as a real
-  `role="switch"` button, target-temperature stepper clamped to 10–32°C —
+  `role="switch"` button, target-temperature stepper clamped to 16–30°C —
   a frontend-only sanity guard, not a backend constraint), a command-status
   strip, the temperature/humidity preview card (linking to a new
   `/devices/:id/graph` stub, same "don't leave a dead link" pattern as

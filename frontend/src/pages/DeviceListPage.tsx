@@ -9,7 +9,7 @@ import { Skeleton } from "../components/Skeleton";
 import { Sparkline } from "../components/Sparkline";
 import { StatusPill } from "../components/StatusPill";
 import { useRecentTelemetry } from "../hooks/useRecentTelemetry";
-import { deviceLabel } from "../lib/device";
+import { deviceLabel, isApplied } from "../lib/device";
 import { formatRelativeTime } from "../lib/format";
 
 const SHOW_OFFLINE_KEY = "climate-iot:show-offline";
@@ -125,10 +125,7 @@ function OnlineDeviceCard({ device }: { device: Device }) {
   const { data: recent } = useRecentTelemetry(device.id);
   const desired = device.device_state?.desired_state;
   const reported = device.device_state?.reported_state;
-  const syncing =
-    desired !== undefined &&
-    reported !== undefined &&
-    (desired.power !== reported.power || desired.target_temperature !== reported.target_temperature);
+  const syncing = desired !== undefined && reported !== undefined && !isApplied(desired, reported);
   const latest = device.latest_telemetry;
 
   return (

@@ -21,7 +21,7 @@ import { Skeleton } from "../components/Skeleton";
 import { Sparkline } from "../components/Sparkline";
 import { StatusPill } from "../components/StatusPill";
 import { useRecentTelemetry } from "../hooks/useRecentTelemetry";
-import { MAX_TARGET_TEMP, MIN_TARGET_TEMP, deviceLabel } from "../lib/device";
+import { MAX_TARGET_TEMP, MIN_TARGET_TEMP, deviceLabel, isApplied } from "../lib/device";
 import { formatRelativeTime } from "../lib/format";
 
 // -/+ taps are collected and sent as one command this long after the last
@@ -495,24 +495,22 @@ function SyncStatus({
   if (lastFailed) return <div className={`${line} text-danger`}>The device couldn't apply the last change.</div>;
   if (!device.device_state || !desired || !reported) return null;
 
-  const inSync =
-    desired.power === reported.power && desired.target_temperature === reported.target_temperature;
-  if (inSync) {
+  if (isApplied(desired, reported)) {
     if (reported.power == null && reported.target_temperature == null) return null;
     return (
       <div className={`${line} text-ink-2`}>
         <CheckIcon className="text-ok" />
-        AC confirmed {describeState(reported)} · {formatRelativeTime(device.device_state.updated_at)}
+        Sent to the AC: {describeState(reported)} · {formatRelativeTime(device.device_state.updated_at)}
       </div>
     );
   }
 
   return (
     <div className="flex flex-col gap-1 rounded-xl bg-accent-soft p-3 text-xs">
-      <span className="font-medium text-accent">Waiting for the AC to confirm…</span>
+      <span className="font-medium text-accent">Waiting for the device to send this to the AC…</span>
       <div className="flex justify-between text-ink-2">
         <span>Asked for: {describeState(desired)}</span>
-        <span>AC reports: {describeState(reported)}</span>
+        <span>Device last sent: {describeState(reported)}</span>
       </div>
     </div>
   );
