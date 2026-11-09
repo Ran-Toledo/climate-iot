@@ -1,4 +1,10 @@
-import { type UseMutationResult, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  type QueryClient,
+  type UseMutationResult,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { type FormEvent, type ReactNode, useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { createCommand, deleteDevice, getCommand, getDevice, renameDevice } from "../api/devices";
@@ -31,6 +37,27 @@ const DEFAULT_TARGET = 22;
 
 type CommandPayload = { power?: boolean; target_temperature?: number };
 
+/** Applies a completed command's result to the cached device, as the backend did to reported_state. */
+function applyCompletedCommand(queryClient: QueryClient, deviceId: number, command: Command) {
+  const result = (command.result ?? {}) as Partial<ClimateState>;
+  queryClient.setQueryData<Device>(["device", deviceId], (old) =>
+    old?.device_state
+      ? {
+          ...old,
+          device_state: {
+            ...old.device_state,
+            reported_state: {
+              ...old.device_state.reported_state,
+              ...(result.power != null && { power: result.power }),
+              ...(result.target_temperature != null && { target_temperature: result.target_temperature }),
+            },
+            updated_at: command.completed_at ?? old.device_state.updated_at,
+          },
+        }
+      : old,
+  );
+}
+
 export function DeviceDetailPage() {
   const { deviceId } = useParams<{ deviceId: string }>();
   const id = Number(deviceId);
@@ -47,15 +74,33 @@ export function DeviceDetailPage() {
     refetchInterval: 5000,
   });
 
-  const { data: activeCommand } = useQuery({
+  const { data: activeCommand, isError: activeCommandError } = useQuery({
     queryKey: ["command", activeCommandId],
-    queryFn: () => getCommand(activeCommandId!),
+    queryFn: async () => {
+      const command = await getCommand(activeCommandId!);
+      // Update the cached device before the "completed" status is delivered,
+      // so no render shows a finished command next to a stale reported state.
+      // Only on the transition: a later refetch (e.g. window focus) of the
+      // same finished command must not overwrite newer device data.
+      const previous = queryClient.getQueryData<Command>(["command", activeCommandId]);
+      if (command.status === "completed" && (!previous || previous.status === "pending")) {
+        applyCompletedCommand(queryClient, id, command);
+      }
+      return command;
+    },
     enabled: activeCommandId !== null,
     refetchInterval: (query) => (query.state.data?.status === "pending" ? 1000 : false),
   });
 
-  // Reflect completion promptly: as soon as the polled command leaves
-  // "pending", refetch the device instead of waiting for the next 5s tick.
+  // Between the command being created and its first status arriving there is
+  // no data yet; that still counts as pending, or the UI flashes the
+  // "waiting" box for that moment.
+  const activeCommandStatus =
+    activeCommand?.status ?? (activeCommandId !== null && !activeCommandError ? "pending" : undefined);
+
+  // Once the polled command leaves "pending", refetch the device to confirm
+  // (invalidating also cancels a stale poll still in flight) instead of
+  // waiting for the next 5s tick.
   useEffect(() => {
     if (activeCommand && activeCommand.status !== "pending") {
       queryClient.invalidateQueries({ queryKey: ["device", id] });
@@ -193,7 +238,7 @@ export function DeviceDetailPage() {
           key={device.id}
           device={device}
           sendCommand={sendCommand}
-          activeCommandStatus={activeCommand?.status}
+          activeCommandStatus={activeCommandStatus}
         />
       </div>
 
